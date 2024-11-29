@@ -22,7 +22,7 @@ A OSINT and infrastructure analysis tool leveraging multiple APIs to gather inte
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/cybersleuth.git
+git clone https://github.com/Mar8x/cybersleuth.git
 cd cybersleuth
 ```
 
