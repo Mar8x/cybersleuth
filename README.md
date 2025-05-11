@@ -1,22 +1,34 @@
 # CyberSleuth
 
-A OSINT and infrastructure analysis tool leveraging multiple APIs to gather intelligence about domains, certificates, and web assets.
+CyberSleuth is an AI-powered OSINT (Open Source Intelligence) tool that helps investigate and analyze cyber threats, infrastructure, and security configurations.
 
 ## Features
 
-- Infrastructure Analysis (DNS, WHOIS, Reverse DNS)
-- SSL/TLS Certificate Intelligence
-- Favicon Hash Analysis
-- Web Asset Analysis via URLScan.io
-- Network Reconnaissance via Shodan
+- Infrastructure Analysis
+  - Favicon hash generation and analysis
+  - DNS enumeration and analysis
+  - WHOIS database investigation
+  - Reverse DNS lookups
+- Certificate Intelligence
+  - SSL/TLS certificate analysis
+  - Subdomain discovery
+  - Certificate authority identification
+  - Certificate tracking
+- Web Analysis
+  - URLScan.io integration
+  - Historical domain tracking
+  - Technology stack identification
+- Threat Intelligence
+  - Multi-source data correlation
+  - Infrastructure mapping
+  - Security issue identification
 
 ## Requirements
 
 - Python 3.8+
-- Required API keys:
-  - OpenAI API key
-  - Shodan API key
-  - URLScan.io API key
+- OpenAI API key
+- Shodan API key (optional)
+- URLScan.io API key (optional)
 
 ## Installation
 
@@ -26,18 +38,37 @@ git clone https://github.com/Mar8x/cybersleuth.git
 cd cybersleuth
 ```
 
-2. Install dependencies:
+2. Create and activate a virtual environment:
 ```bash
-pip install openai shodan requests beautifulsoup4 mmh3 python-whois dnspython prompt_toolkit whois
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
-3. Set up environment variables:
+3. Install dependencies:
 ```bash
-export OPENAI_API_KEY='your-openai-key'
-export OPENAI_MODEL='gpt-4-turbo-preview'  # Optional, defaults to gpt-4-turbo-preview
-export SHODAN_API_KEY='your-shodan-key'
-export URLSCAN_API_KEY='your-urlscan-key'
+pip install -r requirements.txt
 ```
+
+4. Set up your API keys:
+```bash
+export OPENAI_API_KEY='your-openai-api-key'
+export SHODAN_API_KEY='your-shodan-api-key'  # Optional
+export URLSCAN_API_KEY='your-urlscan-api-key'  # Optional
+```
+
+## Configuration
+
+### Model Selection
+
+The tool uses OpenAI's GPT model for analysis. You can configure the model in two ways:
+
+1. Environment Variable:
+```bash
+export OPENAI_MODEL='your-preferred-model'
+```
+
+2. Default Model:
+If no model is specified in the environment, the tool will use a default model. See `agent.py` for the current default model configuration.
 
 ## Usage
 
@@ -46,13 +77,19 @@ Run the tool:
 python cybersleuth.py
 ```
 
-Example commands:
-- `Analyze certificates for domain.com`
-- `Find subdomains from certificates for domain.com`
-- `Check recent certificate activity for domain.com`
-- `Review certificate authorities for domain.com`
+Follow the interactive prompts to:
+1. Enter your investigation target
+2. Choose analysis methods
+3. Review findings
+4. Export results
 
-Type 'exit' to quit the program.
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Tool Modules
 
