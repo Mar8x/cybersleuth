@@ -147,10 +147,34 @@ while True:
             print("Investigation session ended. All data has been saved.")
             break
 
-        agent.add_message(user_input)
-        response = agent.run_agent()
-        print(f"CyberSleuth: {response}")
+        if not user_input.strip():
+            print("Please enter a valid command.")
+            continue
+
+        print("\nProcessing your request...")
+        try:
+            agent.add_message(user_input)
+            response = agent.run_agent()
+            
+            if response is None:
+                print("\nError: No response received from the assistant. Please try again.")
+            elif response.startswith("Error:"):
+                print(f"\nError: {response}")
+            else:
+                print("\nCyberSleuth:")
+                print("-" * 80)
+                print(response)
+                print("-" * 80)
+        except Exception as e:
+            print(f"\nError during processing: {str(e)}")
+            print("Please try again or type 'exit' to quit.")
+            
     except KeyboardInterrupt:
+        print("\nOperation cancelled. Type 'exit' to quit or continue with a new command.")
         continue
     except EOFError:
+        print("\nInvestigation session ended.")
         break
+    except Exception as e:
+        print(f"\nUnexpected error: {str(e)}")
+        print("Please try again or type 'exit' to quit.")

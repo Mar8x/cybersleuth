@@ -28,12 +28,13 @@ cd cybersleuth
 
 2. Install dependencies:
 ```bash
-pip install openai shodan requests beautifulsoup4 mmh3 python-whois dnspython prompt_toolkit
+pip install openai shodan requests beautifulsoup4 mmh3 python-whois dnspython prompt_toolkit whois
 ```
 
 3. Set up environment variables:
 ```bash
 export OPENAI_API_KEY='your-openai-key'
+export OPENAI_MODEL='gpt-4-turbo-preview'  # Optional, defaults to gpt-4-turbo-preview
 export SHODAN_API_KEY='your-shodan-key'
 export URLSCAN_API_KEY='your-urlscan-key'
 ```
