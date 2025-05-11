@@ -62,7 +62,7 @@ class Agent:
             
             self.assistant = self.client.beta.assistants.create(
                 name=self.name,
-                model=os.environ.get("OPENAI_MODEL", "GPT-4.1-nano"),
+                model=os.environ.get("OPENAI_MODEL", "gpt-4.1-nano"),
                 instructions=self.personality,
                 tools=tools_format
             )
