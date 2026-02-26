@@ -1,21 +1,20 @@
-import requests
-import mmh3
 import codecs
-import shodan
-import urllib3
-import time
-from typing import Optional, Dict, List
-from urllib.parse import urlparse, urljoin
-from bs4 import BeautifulSoup
-import re
 import collections
-import whois
+import datetime
+import ipaddress
+import re
+import time
+from typing import Dict, List, Optional
+from urllib.parse import urljoin
+
 import dns.resolver
 import dns.reversename
-import ipaddress
-from typing import List, Dict, Union
+import mmh3
 import requests
-import datetime
+import shodan
+import urllib3
+import whois
+from bs4 import BeautifulSoup
 
 
 def get_certificate_info(domain: str, include_expired: bool = False, wildcard: bool = True) -> Dict:

@@ -1,0 +1,24 @@
+[project]
+name = "cybersleuth"
+version = "0.2.0"
+description = "OSINT & infrastructure analysis MCP server for Claude"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]",
+    "requests",
+    "mmh3",
+    "python-whois",
+    "dnspython",
+    "shodan",
+    "beautifulsoup4",
+    "urllib3",
+]
+
+[project.scripts]
+cybersleuth = "server:mcp.run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

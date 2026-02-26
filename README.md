@@ -1,184 +1,134 @@
 # CyberSleuth
 
-CyberSleuth is an AI-powered OSINT (Open Source Intelligence) tool that helps investigate and analyze cyber threats, infrastructure, and security configurations.
+CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, certificates, domains, and more.
 
 ## Features
 
-- Infrastructure Analysis
-  - Favicon hash generation and analysis
-  - DNS enumeration and analysis
-  - WHOIS database investigation
-  - Reverse DNS lookups
-- Certificate Intelligence
-  - SSL/TLS certificate analysis
-  - Subdomain discovery
-  - Certificate authority identification
-  - Certificate tracking
-- Web Analysis
-  - URLScan.io integration
-  - Historical domain tracking
-  - Technology stack identification
-- Threat Intelligence
-  - Multi-source data correlation
-  - Infrastructure mapping
-  - Security issue identification
+- **Infrastructure Analysis** -- favicon hash generation, DNS enumeration, WHOIS investigation, reverse DNS
+- **Certificate Intelligence** -- SSL/TLS certificate history via crt.sh, subdomain discovery, CA tracking
+- **Web Analysis** -- URLScan.io scanning and historical data
+- **Threat Intelligence** -- Shodan searches, infrastructure mapping, multi-source correlation
 
 ## Requirements
 
-- Python 3.8+
-- OpenAI API key
-- Shodan API key (optional)
-- URLScan.io API key (optional)
+- Python 3.10+
+- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- Shodan API key (optional, for `shodan_search`)
+- URLScan.io API key (optional, for `urlscan_history` / `urlscan_submit`)
 
 ## Installation
 
-1. Clone the repository:
 ```bash
 git clone https://github.com/Mar8x/cybersleuth.git
 cd cybersleuth
+uv sync
 ```
 
-2. Create and activate a virtual environment:
+Or with pip:
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e .
 ```
 
-3. Install dependencies:
+## Setup
+
+### Claude Desktop
+
+Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "cybersleuth": {
+      "command": "uv",
+      "args": ["run", "--directory", "/absolute/path/to/cybersleuth", "server.py"],
+      "env": {
+        "SHODAN_API_KEY": "your-shodan-api-key",
+        "URLSCAN_API_KEY": "your-urlscan-api-key"
+      }
+    }
+  }
+}
+```
+
+### Claude Code
+
 ```bash
-pip install -r requirements.txt
+claude mcp add cybersleuth -- uv run --directory /absolute/path/to/cybersleuth server.py
 ```
 
-4. Set up your API keys:
+Set the API keys in your shell environment:
+
 ```bash
-export OPENAI_API_KEY='your-openai-api-key'
-export SHODAN_API_KEY='your-shodan-api-key'  # Optional
-export URLSCAN_API_KEY='your-urlscan-api-key'  # Optional
+export SHODAN_API_KEY='your-shodan-api-key'
+export URLSCAN_API_KEY='your-urlscan-api-key'
 ```
 
-## Configuration
+### Skill File
 
-### Model Selection
+Load `cybersleuth.md` as the system prompt or project instructions in your chat agent. It contains the CyberSleuth persona, investigation methodology, and example queries.
 
-The tool uses OpenAI's GPT model for analysis. You can configure the model in two ways:
+## Available Tools
 
-1. Environment Variable:
-```bash
-export OPENAI_MODEL='your-preferred-model'
-```
+| Tool | Description |
+|---|---|
+| `whois_lookup` | WHOIS registration data for a domain or IP |
+| `dns_records` | DNS enumeration (A, AAAA, MX, NS, TXT, SOA, CNAME, PTR, SRV, CAA) |
+| `reverse_dns` | Reverse DNS lookup for an IP address |
+| `certificate_info` | SSL/TLS certificate history from crt.sh |
+| `favicon_hash` | Favicon hashes for Shodan infrastructure searches |
+| `shodan_search` | Search Shodan for internet-connected devices |
+| `urlscan_history` | Historical URLScan.io scan data |
+| `urlscan_submit` | Submit a URL for live scanning on URLScan.io |
 
-2. Default Model:
-If no model is specified in the environment, the tool will use a default model. See `agent.py` for the current default model configuration.
-
-## Usage
-
-Run the tool:
-```bash
-python cybersleuth.py
-```
-
-Follow the interactive prompts to:
-1. Enter your investigation target
-2. Choose analysis methods
-3. Review findings
-4. Export results
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Tool Modules
-
-- `cybersleuth.py`: Main entry point and CLI interface
-- `agent.py`: OpenAI GPT integration and command processing
-- `tools.py`: Core OSINT and analysis functions
-
-## Architecture & Security
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        YOUR LOCAL MACHINE                       │
-│  ┌─────────────┐    ┌──────────────┐    ┌────────────────────┐  │
-│  │             │    │  CyberSleuth │    │ Environment Vars   │  │
-│  │ User Input  ├───►│  (Main App)  │◄───┤ API Keys (.env)    │  │
-│  │             │    │              │    │ - OpenAI           │  │
-│  └─────────────┘    └──────┬───────┘    │ - Shodan           │  │
-│                            │            │ - URLScan          │  │
-│                            ▼            └────────────────────┘  │
-│               ┌────────────────────────┐                        │
-│               │   Agent (OpenAI GPT)   │                        │
-│               └────────────┬───────────┘                        │
-│                            │                                    │
-│  ┌──────────────────────┐  │  ┌───────────────────────┐         │
-│  │    Tools Module      │  │  │  Security Features    │         │
-│  │ - Certificate Info   │◄ ┘  │                       │         │
-│  │ - WHOIS              │     │ - Rate Limiting TBD   │         │
-│  │ - DNS Records        │     │ - Error Handling      │         │
-│  │ - Favicon Analysis   │     │ - Input Validation TBD│         │
-│  └─────────┬────────────┘     └───────────────────────┘         │
-└────────────┼────────────────────────────────────────────────────┘
-             │
-             ▼
-┌─────────────────────────┐    ┌──────────────────┐
-│  External APIs (HTTPS)  │    │ Security Notes   │
-│  - crt.sh               │    │ - API Rate Limits│
-│  - Shodan               │    │ - IP Tracking    │
-│  - URLScan.io           │    │ - Query Logging  │
-│  - WHOIS Servers        │    │ - Data Retention │
-└─────────────────────────┘    └──────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Claude Desktop / Claude Code                                │
+│  ┌────────────────────┐  ┌─────────────────────────────────┐ │
+│  │ cybersleuth.md      │  │ MCP Client                     │ │
+│  │ (skill / persona)   │  │ (connects to server via stdio)  │ │
+│  └────────────────────┘  └──────────────┬──────────────────┘ │
+└─────────────────────────────────────────┼────────────────────┘
+                                          │ MCP protocol
+┌─────────────────────────────────────────┼────────────────────┐
+│  YOUR LOCAL MACHINE                     │                    │
+│  ┌──────────────────────────────────────▼─────────────────┐  │
+│  │  server.py (MCP Server)                                │  │
+│  │  └── tools.py (OSINT functions)                        │  │
+│  └──────────────────────┬─────────────────────────────────┘  │
+│                         │                                    │
+│  ┌──────────────────────▼─────────────────────────────────┐  │
+│  │  Environment Variables                                 │  │
+│  │  SHODAN_API_KEY, URLSCAN_API_KEY                       │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────────────────┐
+│  External APIs (HTTPS)                                       │
+│  crt.sh · Shodan · URLScan.io · WHOIS servers · DNS          │
+└──────────────────────────────────────────────────────────────┘
 ```
-
-
 
 ## Data Sources & Attribution
-This tool uses the following services:
-- Certificate data: crt.sh (Certificate Transparency logs)
-- Network intelligence: Shodan (https://shodan.io)
-- URL scanning: URLScan.io (https://urlscan.io)
+
+- Certificate data: [crt.sh](https://crt.sh) (Certificate Transparency logs)
+- Network intelligence: [Shodan](https://shodan.io)
+- URL scanning: [URLScan.io](https://urlscan.io)
 - DNS information: Public DNS services
 - WHOIS data: Public WHOIS servers
 
-## Security & Compliance
-### API Key Management
-- Store API keys in environment variables or `.env` file
-- Use separate API keys for development and production
-- Rotate API keys regularly
-- Never commit API keys to version control
+## Security & OPSEC
 
-### OpenAI API Usage
-- Follow your organization's data handling policies
-- Use OpenAI organization ID and project-specific API keys
-- Consider data privacy implications when sending queries
-- Review OpenAI's data usage policies: https://openai.com/policies/api-data-usage-policies
+- API keys are stored as environment variables, never sent to the LLM
+- All external API queries may be logged by the respective services
+- Services track IP addresses and usage patterns
+- Consider using approved proxies for sensitive research
+- No persistent storage of investigation results
+- Respect API rate limits
 
-### OPSEC Considerations
-1. Query Tracking:
-   - All external API queries may be logged
-   - Services track IP addresses and usage patterns
-   - Favicon search will be done from cybersleuth's IP.
-   - Consider using approved proxies for sensitive research for example with proxychains
+## License
 
-2. Data Handling:
-   - No persistent storage of results - only commands
-   - Memory-only operation - verify with your openAI project settings
-   - Sanitized error messages
-   - Follow your organization's data retention policies
-
-3. Rate Limiting:
-   - Respect API rate limits
-   - Implement backoff strategies
-   - Monitor usage patterns
-
-### Corporate Compliance
-- Obtain necessary approvals before deployment
-- Review your company's:
-  - Data handling policies
-  - API usage guidelines
-  - Security requirements
-  - Privacy impact assessments
-  - Third-party service policies
-
+MIT -- see [LICENSE](LICENSE) for details.
