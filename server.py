@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 import os
+from pathlib import Path
+
 from mcp.server.fastmcp import FastMCP
 
 from tools import (
@@ -11,6 +13,10 @@ from tools import (
     get_dns_records,
     reverse_dns_lookup,
     get_certificate_info,
+    get_builtwith_free,
+    get_vt_domain_report,
+    get_vt_ip_report,
+    get_as_intelligence,
 )
 
 mcp = FastMCP(
@@ -24,6 +30,25 @@ mcp = FastMCP(
         "beautifulsoup4",
     ],
 )
+
+_SKILL_FILE = Path(__file__).resolve().parent / "cybersleuth.md"
+
+
+def _get_skill_content() -> str:
+    """Return CyberSleuth skill/agent instructions from cybersleuth.md."""
+    return _SKILL_FILE.read_text(encoding="utf-8")
+
+
+@mcp.resource("cybersleuth://instructions")
+def instructions_resource() -> str:
+    """CyberSleuth persona, methodology, and example queries (skill / agent instructions)."""
+    return _get_skill_content()
+
+
+@mcp.prompt(title="CyberSleuth system instructions")
+def system_instructions_prompt() -> str:
+    """Load the CyberSleuth system prompt: persona, investigation methodology, and example queries. Use as system or project instructions in your agent."""
+    return _get_skill_content()
 
 
 @mcp.tool()
@@ -148,6 +173,67 @@ def urlscan_submit(url: str) -> dict:
     if not api_key:
         return {"error": "URLSCAN_API_KEY environment variable is not set"}
     return scan_url(url, api_key)
+
+
+@mcp.tool()
+def builtwith_lookup(domain: str) -> dict:
+    """Get technology groups and categories for a domain via BuiltWith Free API.
+
+    Uses the BuiltWith Free API (no paid subscription). Returns technology
+    groups and categories with live/dead counts and last-seen timestamps.
+    A free API key from builtwith.com is required. Rate limit: 1 request per second.
+
+    Args:
+        domain: Domain to look up (e.g. example.com)
+    """
+    api_key = os.environ.get("BUILTWITH_API_KEY")
+    return get_builtwith_free(domain, api_key)
+
+
+@mcp.tool()
+def as_intelligence(domain_or_ip: str) -> dict:
+    """Get Autonomous System (AS) intelligence for an IP or domain.
+
+    Resolves domain to IP if needed, then returns ASN, AS org, country, and
+    flags for whether the AS is a known hosting/cloud provider. When not
+    hosting, the AS org may be the actual organization (enterprise or ISP).
+
+    Args:
+        domain_or_ip: Domain name or IP address to look up
+    """
+    return get_as_intelligence(domain_or_ip)
+
+
+@mcp.tool()
+def vt_domain_report(domain: str) -> dict:
+    """Get VirusTotal reputation and analysis stats for a domain.
+
+    Returns last_analysis_stats (malicious, suspicious, harmless, undetected),
+    reputation, and categories. Free tier is rate-limited (e.g. 4 requests/min).
+
+    Args:
+        domain: Domain to look up (e.g. example.com)
+    """
+    api_key = os.environ.get("VIRUSTOTAL_API_KEY")
+    if not api_key:
+        return {"error": "VIRUSTOTAL_API_KEY environment variable is not set"}
+    return get_vt_domain_report(domain, api_key)
+
+
+@mcp.tool()
+def vt_ip_report(ip: str) -> dict:
+    """Get VirusTotal reputation and analysis stats for an IP address.
+
+    Returns last_analysis_stats, reputation, network, and country when available.
+    Free tier is rate-limited (e.g. 4 requests/min).
+
+    Args:
+        ip: IP address to look up
+    """
+    api_key = os.environ.get("VIRUSTOTAL_API_KEY")
+    if not api_key:
+        return {"error": "VIRUSTOTAL_API_KEY environment variable is not set"}
+    return get_vt_ip_report(ip, api_key)
 
 
 if __name__ == "__main__":
