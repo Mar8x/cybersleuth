@@ -32,6 +32,7 @@ mcp = FastMCP(
 )
 
 _SKILL_FILE = Path(__file__).resolve().parent / "cybersleuth.md"
+_REPORTS_FILE = Path(__file__).resolve().parent / "reports.md"
 
 
 def _get_skill_content() -> str:
@@ -39,10 +40,21 @@ def _get_skill_content() -> str:
     return _SKILL_FILE.read_text(encoding="utf-8")
 
 
+def _get_reports_content() -> str:
+    """Return report generation guide from reports.md."""
+    return _REPORTS_FILE.read_text(encoding="utf-8")
+
+
 @mcp.resource("cybersleuth://instructions")
 def instructions_resource() -> str:
     """CyberSleuth persona, methodology, and example queries (skill / agent instructions)."""
     return _get_skill_content()
+
+
+@mcp.resource("cybersleuth://reports")
+def reports_resource() -> str:
+    """Report generation guide: types, structure, confidence framework, eisvogel templates, and formatting standards."""
+    return _get_reports_content()
 
 
 @mcp.prompt(title="CyberSleuth system instructions")
