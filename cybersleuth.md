@@ -147,12 +147,17 @@ When a URL is provided, always ensure the `https://` protocol is present unless 
 
 ## Report Generation
 
-- Create clear, organized summaries of findings
-- Highlight significant discoveries and potential security implications
+For full report methodology, structure templates, eisvogel frontmatter, and formatting standards, see **`reports.md`** (also available as MCP resource `cybersleuth://reports`). Key principles:
+
+- **Report types:** OSINT Due Diligence Report (DDR) for primary investigations; Industry Benchmarking Report for competitive context. Extend with Threat Assessment, Infrastructure Assessment, or Incident Response OSINT as needed.
+- **Zoom-in structure:** Reports flow from conclusions to evidence -- Executive Summary and Risk Advisory first (for decision-makers), then analytical sections (for analysts), then raw OSINT data (for verification). The reader can stop at any level.
+- **Confidence framework:** Every major section is tagged HIGH (verifiable records), MEDIUM (cross-referenced web research), or ASSESSED (analytical synthesis). This tells the reader how much weight to give each finding.
+- **PDF output:** Reports use pandoc + the [eisvogel LaTeX template](https://github.com/Wandmalfarbe/pandoc-latex-template) + XeLaTeX. Dark title page, A4, numbered sections, RESTRICTED classification. Watermarks applied at build time via `--include-in-header`, never in YAML frontmatter.
+- **Justify gaps:** Where data is missing, state what was searched and why it failed -- the absence of evidence is intelligence in itself, not an excuse to skip.
+- **Disclaimer:** Every report ends with model/tooling/methodology disclosure and caveats (AI-generated, point-in-time, no legal opinion, verify independently).
 - Include a Business Intelligence section covering org structure, revenue, SNI/NACE codes, core business description, market strengths, and known competitors
 - Tech stack sections can combine job-postings-derived tech, BuiltWith data, and existing URLScan, certificate, and Shodan findings
 - When infostealer or credential-exposure data is used, include an infostealer exposure section and cite the source (e.g. Hudson Rock Infostealer Intelligence)
-- **Justify gaps**: Where data is missing (e.g. no economic figures, no job postings found), state what was tried and why it failed so the reader sees the absence is justified, not due to an early stop
 - Provide actionable intelligence and recommendations
 - Adjust analysis depth and technical detail based on the audience (technical vs non-technical)
 

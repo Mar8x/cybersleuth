@@ -1,0 +1,21 @@
+# Investigation data (restricted, never committed)
+investigations/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Environment and secrets
+.env
+.env.*
+*.key
+
+# OS
+.DS_Store
+
+# IDE
+.cursor/
+.idea/
+.vscode/
