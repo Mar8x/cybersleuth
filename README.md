@@ -8,6 +8,7 @@ CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-inves
 - **Certificate Intelligence** -- SSL/TLS certificate history via crt.sh, subdomain discovery, CA tracking
 - **Web Analysis** -- URLScan.io scanning and historical data, BuiltWith technology lookup (free API)
 - **Threat Intelligence** -- Shodan searches, VirusTotal domain/IP reports, infrastructure mapping, multi-source correlation
+- **People & Company OSINT** -- people investigation methodology, jurisdiction data availability, CV claim verification, content character profiling
 
 ## Requirements
 
@@ -74,10 +75,22 @@ export VIRUSTOTAL_API_KEY='your-virustotal-api-key'
 
 Load `cybersleuth.md` as the system prompt or project instructions in your chat agent. It contains the CyberSleuth persona, investigation methodology, and example queries.
 
-The same content is also exposed by the MCP server:
+The same content is also exposed by the MCP server as resources:
 
-- **Resource:** `cybersleuth://instructions` — read the skill/agent instructions via the MCP resource API.
-- **Prompt:** "CyberSleuth system instructions" — use this MCP prompt to load the system instructions (clients that support MCP prompts can pull it from the server).
+- **`cybersleuth://instructions`** — skill/agent instructions (persona, methodology, example queries)
+- **`cybersleuth://reports`** — report generation guide (DDR structure, confidence framework, eisvogel/pandoc templates)
+- **`cybersleuth://people-osint`** — people OSINT methodology (jurisdiction data availability, CV claim scorecard, content character profiling)
+- **Prompt:** "CyberSleuth system instructions" — load the instructions as an MCP prompt (for clients that support MCP prompts)
+
+### Methodology Docs
+
+The `docs/` directory contains standalone reference guides stripped of agent-specific orchestration:
+
+- `docs/ethics.md` — OSINT ethics and legal boundaries
+- `docs/methodology.md` — intelligence cycle, confidence levels, quality gates
+- `docs/domain-workflow.md` — step-by-step domain investigation phases
+- `docs/company-workflow.md` — step-by-step company OSINT phases
+- `docs/entity-workflow.md` — step-by-step entity/threat investigation phases
 
 ## Available Tools
 
@@ -101,7 +114,9 @@ The same content is also exposed by the MCP server:
 | Type | Identifier | Description |
 |------|-------------|-------------|
 | Resource | `cybersleuth://instructions` | Skill/agent instructions (persona, methodology, example queries) |
-| Prompt | CyberSleuth system instructions | Load the same content as a prompt for use as system or project instructions |
+| Resource | `cybersleuth://reports` | Report generation guide (DDR structure, confidence framework, templates) |
+| Resource | `cybersleuth://people-osint` | People OSINT methodology (jurisdiction guide, CV scorecard, character profiling) |
+| Prompt | CyberSleuth system instructions | Load instructions as a prompt for use as system or project instructions |
 
 ## Architecture
 
