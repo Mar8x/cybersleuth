@@ -164,7 +164,7 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 
 ## Security & OPSEC
 
-- API keys are stored as environment variables, never sent to the LLM
+- API keys are stored as environment variables
 - All external API queries may be logged by the respective services
 - Services track IP addresses and usage patterns
 - Consider using approved proxies for sensitive research
