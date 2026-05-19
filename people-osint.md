@@ -1,69 +1,87 @@
 # People OSINT Methodology
 
+**Scope:** Identifying and verifying company leadership — executives, board members, directors, and key decision-makers — as part of company due diligence or corporate intelligence. This is not a general people-finding guide.
+
+---
+
 ## Jurisdiction Data Availability
 
-Public data availability varies significantly by country. Use this as a guide for scope-setting before investigation, not as a hard rule — availability changes and sources appear and disappear.
+Company registers are the primary source for leadership identification. Coverage and depth vary by jurisdiction.
 
 | Jurisdiction | Availability | Notes |
 |---|---|---|
-| Nordic (SE/NO/DK/FI) | HIGH | Company registers fully public; population address registration; income/property data (Sweden: Skatteverket); GDPR applies but transparency tradition carves out public company data |
-| UK | MEDIUM-HIGH | Companies House director search; electoral roll via paid aggregators; free company filings with director history |
-| Germany | LOW-MEDIUM | Handelsregister (handelsregister.de); strict GDPR enforcement; low phone/address directory coverage |
-| France | LOW-MEDIUM | INPI/Sirene (annuaire-entreprises.data.gouv.fr); RGPD constraints limit address and personal data |
-| US | HIGH | PACER (federal courts); Secretary of State; county assessors; voter rolls; people-search aggregators; no federal GDPR equivalent |
+| Nordic (SE/NO/DK/FI) | HIGH | Company registers fully public; board and director roles listed with personal identity numbers in some cases; income data (Sweden: Skatteverket); GDPR applies but transparency tradition carves out public company data |
+| UK | MEDIUM-HIGH | Companies House: full director history, appointment/resignation dates, other directorships, date of birth (partial); free and searchable |
+| Germany | LOW-MEDIUM | Handelsregister (handelsregister.de): directors listed but strict GDPR limits personal detail; paid access for some documents |
+| France | LOW-MEDIUM | INPI/Sirene (annuaire-entreprises.data.gouv.fr): legal representatives listed; RGPD constraints limit personal data |
+| US | HIGH | Secretary of State (varies by state): registered agent and officers; SEC EDGAR for public companies (proxy statements, Form 4, 8-K name officer changes); no federal GDPR equivalent |
 
-**Source discovery pattern:** For any jurisdiction not listed here, search: `"[country] company register person search OSINT [year]"`. Always discover current sources at investigation time — do not rely on hardcoded URLs.
+**Source discovery pattern:** Search `"[country] company register director search [year]"` to find current authoritative sources — do not rely on hardcoded URLs.
 
 ---
 
-## CV Claim Scorecard
+## Leadership Identification Workflow
 
-A structured method for verifying claims made in a CV, LinkedIn profile, or interview.
+### Step 1 — Company register
 
-### Verdicts
+Start with the official register for the target jurisdiction:
+- Retrieve current board composition (chair, members, alternates)
+- Note appointment dates — recent changes are intelligence
+- Check for cross-directorships: the same person on multiple boards may indicate holding structure or key influence
+- Verify legal role title precisely — `suppleant` (alternate), `ledamot` (member), `VD` (CEO) each carry different authority; claimed titles should match the register
+
+### Step 2 — LinkedIn
+
+Cross-reference register names against LinkedIn:
+- Confirm current role and employer match register data
+- Map career history — prior employers and roles reveal industry background and network
+- Note connection density in target sector (strong signal for domain expertise or insider relationships)
+
+### Step 3 — Username → domain pivot
+
+For each executive found, search for personal domains and online presence:
+- Check `[firstname][lastname].com`, `[handle].com`, `[handle].se`, `[handle].eu`, `[handle].io`
+- Run `whois_lookup` + `dns_records` on any that resolve
+- Cross-reference WHOIS registrant with known identity to confirm ownership
+
+### Step 4 — Adverse and sanctions checks
+
+For each key individual:
+- OFAC SDN list, EU Consolidated Sanctions, OpenSanctions
+- PEP (Politically Exposed Person) databases
+- Court and litigation records (PACER for US; national court registers)
+- Adverse media search: `"[full name]" site:news.google.com OR "[full name]" fraud OR scandal`
+
+---
+
+## Role Verification
+
+When a claimed title needs verification against the register, use this verdict framework:
 
 | Verdict | Meaning |
 |---|---|
-| **CONFIRMED** | Verified against an authoritative source (company register, public record, credential database) |
+| **CONFIRMED** | Verified against company register or official filing |
 | **PLAUSIBLE** | Consistent with available evidence but not directly verifiable |
-| **UNVERIFIED** | No corroborating evidence found; absence of evidence is not evidence of absence |
-| **EMBELLISHED** | Claim is materially exaggerated or misleading relative to the verifiable record |
+| **UNVERIFIED** | No corroborating record found |
+| **EMBELLISHED** | Materially exaggerated relative to the legal record |
 
-### Table Format
-
-| ID | Claim | Verdict | Confidence | Evidence |
-|---|---|---|---|---|
-| C1 | [claim text] | CONFIRMED | HIGH | [source] |
-
-### Embellishment Distinctions
-
-When assigning EMBELLISHED, document which type:
-- **Fabrication** — entirely false (no supporting record exists)
-- **Title inflation** — real role exists but the title claimed implies greater seniority or authority than the legal record supports; company or corporate register is authoritative on actual role and voting rights
-- **Date manipulation** — real role but dates adjusted to cover a gap or extend tenure
+**Embellishment types:**
+- **Title inflation** — real role exists but claimed title implies greater authority than the legal record supports; company register is authoritative on actual role and voting rights
+- **Date manipulation** — real role but tenure dates adjusted to cover a gap or extend apparent experience
+- **Fabrication** — no supporting record exists
 
 ---
 
-## Content Character Profiling
+## Content & Professional Presence
 
-Assessment of a subject's online voice and public content as a character indicator.
+For executive-level subjects, assess public professional presence:
 
-### Channel Identification
-
-Check channels in order of signal richness:
-1. **Personal blog or personal domain** — least filtered; most candid; subject controls the platform
-2. **YouTube** — audio/visual voice; comment sections add context; subscription/upload dates reveal activity timeline
-3. **Social media** (LinkedIn, Twitter/X, Facebook, Instagram) — check both professional and personal/alias accounts
-
-### Language Register Signals
-
-- **Professional restraint** (real name, employer-affiliated account, LinkedIn): formal language, measured opinions, employer-safe content
-- **Candid voice** (alias, personal domain, hobby forum, gaming platform): more authentic; strong language, personal opinions, identity-linked community membership
-
-When a significant gap exists between the professional persona and the alias persona, the alias channel is typically more representative of character.
+- **LinkedIn activity** — posting frequency and topics signal genuine domain engagement vs. a dormant profile
+- **Compartmentalization signal** — gap between a polished professional persona (real name, LinkedIn) and an alias-based personal persona; the alias channel is typically more candid
+- **Published work** — articles, conference talks, patents, or board advisory roles corroborate claimed expertise
 
 ### Absence of Adverse Findings
 
-Absence of adverse content is a positive data point and should be stated explicitly with a confidence level, e.g.:
+Absence of adverse content is a positive data point — state it explicitly with a confidence level:
 
-> "No adverse content or problematic platform presence found across [channels checked]. Confidence: MEDIUM (public-facing content only; private channels not assessed)."
+> "No adverse media, sanctions listings, or litigation records found for [role]. Confidence: MEDIUM (public sources only)."
