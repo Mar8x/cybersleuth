@@ -1,5 +1,13 @@
 # CyberSleuth
 
+[![Version](https://img.shields.io/badge/version-0.4.0-blue)](https://github.com/Mar8x/cybersleuth/releases)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
+[![Claude](https://img.shields.io/badge/Claude-Desktop%20%7C%20Code-orange)](https://claude.ai)
+[![PAI](https://img.shields.io/badge/PAI-integrated-red)](https://github.com/danielmiessler/Personal_AI_Infrastructure)
+[![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://docs.astral.sh/uv/)
+
 CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, certificates, domains, and more.
 
 ## Features
