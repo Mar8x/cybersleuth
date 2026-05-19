@@ -33,6 +33,7 @@ mcp = FastMCP(
 
 _SKILL_FILE = Path(__file__).resolve().parent / "cybersleuth.md"
 _REPORTS_FILE = Path(__file__).resolve().parent / "reports.md"
+_PEOPLE_FILE = Path(__file__).resolve().parent / "people-osint.md"
 
 
 def _get_skill_content() -> str:
@@ -45,6 +46,11 @@ def _get_reports_content() -> str:
     return _REPORTS_FILE.read_text(encoding="utf-8")
 
 
+def _get_people_content() -> str:
+    """Return people OSINT methodology from people-osint.md."""
+    return _PEOPLE_FILE.read_text(encoding="utf-8")
+
+
 @mcp.resource("cybersleuth://instructions")
 def instructions_resource() -> str:
     """CyberSleuth persona, methodology, and example queries (skill / agent instructions)."""
@@ -55,6 +61,12 @@ def instructions_resource() -> str:
 def reports_resource() -> str:
     """Report generation guide: types, structure, confidence framework, eisvogel templates, and formatting standards."""
     return _get_reports_content()
+
+
+@mcp.resource("cybersleuth://people-osint")
+def people_osint_resource() -> str:
+    """People OSINT methodology: jurisdiction data availability, CV claim scorecard, content character profiling."""
+    return _get_people_content()
 
 
 @mcp.prompt(title="CyberSleuth system instructions")
