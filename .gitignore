@@ -1,6 +1,9 @@
 # Investigation data (restricted, never committed)
 investigations/
 
+# Planning files (local only)
+Plans/
+
 # Python
 __pycache__/
 *.pyc

@@ -182,3 +182,32 @@ For full report methodology, structure templates, eisvogel frontmatter, and form
 - "Does company X share an Azure AD tenant with its parent company Y?"
 - "What SaaS tools does domain X use? (decode SPF and TXT records)"
 - "Is the subsidiary on the same M365 tenant as the parent, or running independent IT?"
+
+## People Investigation
+
+- **CV artifact intake** — before any search, extract the full claim register from the provided CV or LinkedIn: employment history (employer, title, dates), education (institution, degree, dates), certifications, and identity anchors (email, phone, LinkedIn URL, personal website, aliases)
+- **Username → domain pivot** — for each username or alias found, check `[handle].com`, `[handle].se`, `[handle].eu`, `[handle].io`; run `whois_lookup` + `dns_records` on any that resolve; cross-reference the WHOIS registrant name/email with known subject identifiers to confirm ownership
+- **Compartmentalization signal** — look for a gap between a polished professional persona (real name, LinkedIn, company email) and an alias-based personal/hobby persona (personal domain, hobby forum, gaming platform); the alias channel is typically the more candid voice and often carries behavioral signals absent from the professional profile
+- For jurisdiction-specific data availability, CV Claim Scorecard methodology, and content character profiling, see `cybersleuth://people-osint`
+
+## Additional Investigation Techniques
+
+### SNMP Engine Uptime as Patch Inference
+
+When Shodan data includes SNMP engine time for a device: `engine_time_days / 365 ≈ years since last reboot ≈ lower bound on unpatched firmware age`. Uptime over 2 years on a network device is a finding — it indicates the firmware has likely not been updated since that boot date. Severity: LOW if 1–2 years, MEDIUM if 2–3 years, HIGH if over 3 years on an internet-exposed device.
+
+### Domain Expiry as Urgent Finding
+
+When `whois_lookup` returns an expiration date, calculate days remaining. If `expiration_date < 30 days`, flag HIGH regardless of other findings — an expired or lapsing domain creates an immediate brand/domain squatting risk. This finding takes priority in the report over longer-term infrastructure findings.
+
+### DNSSEC on Identity Provider Domains
+
+When a domain hosts a live identity provider (BankID, OAuth IDP, SAML SP/IdP, SSO login endpoint) but its DNSSEC delegation is unsigned, flag MEDIUM. DNS cache poisoning on an unsigned zone can redirect authentication flows to an attacker-controlled endpoint. Verify DNSSEC status via `dns_records` (look for RRSIG, DNSKEY records) or the DNSSEC field in `whois_lookup` output.
+
+### CT Log Subdomain Naming Patterns
+
+Certificate Transparency logs reveal more than subdomains — the naming conventions decode the internal architecture:
+- **Environment suffixes** (e.g., `appname-prod`, `appname-test`, `appname-staging`) → confirms prod/test split and active development; test/staging environments may have weaker security controls
+- **Service-role prefixes** (e.g., `clearingservice.*`, `partner-portal.*`, `fabrikswebben.*`) → identify backend systems and business relationships without active probing
+- **Identity/auth prefixes** (e.g., `bankid-idp.*`, `sso.*`, `auth.*`) → reveal third-party authentication dependencies; cross-check these against DNSSEC signing status
+- **API prefixes** (e.g., `api.*`, `api-v2.*`) → identify public or partner-facing API surface area
