@@ -1,6 +1,6 @@
 # CyberSleuth with PAI
 
-CyberSleuth works as a standalone MCP server — but when connected to a personal AI infrastructure (PAI) layer, the same tools produce significantly deeper results.
+CyberSleuth works as a standalone MCP server — but when connected to a [Personal AI Infrastructure (PAI)](https://github.com/danielmiessler/Personal_AI_Infrastructure) layer, the same tools produce significantly deeper results.
 
 ## Standalone (Claude Desktop / Claude Code)
 
