@@ -100,6 +100,7 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 - `docs/domain-workflow.md` — step-by-step domain investigation phases
 - `docs/company-workflow.md` — step-by-step company OSINT phases
 - `docs/entity-workflow.md` — step-by-step entity/threat investigation phases
+- `docs/company-ddr.md` — **Company DDR playbook**: full 5-phase due diligence workflow (domain discovery → infra recon → 12-agent parallel research fleet → claims verification → DDR PDF); PAI-portable, runs in any Claude Code session with CyberSleuth MCP installed; also available as `cybersleuth://company-ddr` resource
 
 ## Available Tools
 
@@ -125,6 +126,7 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | Resource | `cybersleuth://instructions` | Skill/agent instructions (persona, methodology, example queries) |
 | Resource | `cybersleuth://reports` | Report generation guide (DDR structure, confidence framework, templates) |
 | Resource | `cybersleuth://people-osint` | People OSINT methodology (jurisdiction guide, CV scorecard, character profiling) |
+| Resource | `cybersleuth://company-ddr` | Company DDR workflow: 5-phase playbook for due diligence investigations producing a DDR PDF |
 | Prompt | CyberSleuth system instructions | Load instructions as a prompt for use as system or project instructions |
 
 ## Architecture

@@ -34,6 +34,7 @@ mcp = FastMCP(
 _SKILL_FILE = Path(__file__).resolve().parent / "cybersleuth.md"
 _REPORTS_FILE = Path(__file__).resolve().parent / "reports.md"
 _PEOPLE_FILE = Path(__file__).resolve().parent / "people-osint.md"
+_COMPANY_DDR_FILE = Path(__file__).resolve().parent / "docs" / "company-ddr.md"
 
 
 def _get_skill_content() -> str:
@@ -49,6 +50,11 @@ def _get_reports_content() -> str:
 def _get_people_content() -> str:
     """Return people OSINT methodology from people-osint.md."""
     return _PEOPLE_FILE.read_text(encoding="utf-8")
+
+
+def _get_company_ddr_content() -> str:
+    """Return company DDR workflow from docs/company-ddr.md."""
+    return _COMPANY_DDR_FILE.read_text(encoding="utf-8")
 
 
 @mcp.resource("cybersleuth://instructions")
@@ -67,6 +73,12 @@ def reports_resource() -> str:
 def people_osint_resource() -> str:
     """People OSINT methodology: jurisdiction data availability, CV claim scorecard, content character profiling."""
     return _get_people_content()
+
+
+@mcp.resource("cybersleuth://company-ddr")
+def company_ddr_resource() -> str:
+    """Company DDR workflow: 5-phase due diligence playbook (domain discovery, infra recon, 12-agent research fleet, claims verification, DDR PDF). PAI-portable — uses CyberSleuth MCP tools and Claude Code Agent calls."""
+    return _get_company_ddr_content()
 
 
 @mcp.prompt(title="CyberSleuth system instructions")
