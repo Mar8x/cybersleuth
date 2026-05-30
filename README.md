@@ -9,31 +9,42 @@
 [![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://docs.astral.sh/uv/)
 [![Built with Claude](https://img.shields.io/badge/built%20with-Claude-black)](https://claude.ai)
 
-CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, certificates, domains, and more.
+CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes 25 cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, domains, companies, people, tech stacks, privacy posture, LLM surfaces, and more.
 
 ## Features
 
-- **Infrastructure Analysis** -- favicon hash generation, DNS enumeration, WHOIS investigation, reverse DNS, AS (Autonomous System) intelligence with hosting/cloud detection
-- **Certificate Intelligence** -- SSL/TLS certificate history via CertSpotter + Censys (CT log aggregation), subdomain discovery, CA tracking
-- **Security Contact Discovery** -- security.txt lookup (RFC 9116): contact, policy, encryption key, expiry check
-- **Web Analysis** -- URLScan.io scanning and historical data, BuiltWith technology lookup (free API)
-- **Threat Intelligence** -- Shodan searches, VirusTotal domain/IP reports, infrastructure mapping, multi-source correlation
-- **Tech-Stack Intelligence** -- ATS discovery (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio, and 6 more), job-posting keyword extraction, GitHub org recon (repos, dep files, CI workflows), Wayback Machine fallback, synthesis profile
-- **LLM / AI Surface Recon** -- passive fingerprinting of LLM-powered apps (provider, framework, model strings, leaked credentials, MCP exposure); benign chat probe; authorization-gated OWASP LLM Top 10:2025 probes
-- **Privacy & Data Handling** -- privacy policy discovery and OPP-115 classification; jurisdiction detection (GDPR/CCPA/LGPD/PIPL/PIPEDA) with compliance gap analysis; AI training clause detection (EU AI Act Art. 53); tracker scan (~30 entries) with enforcement-backed contradiction detection
-- **People & Company OSINT** -- people investigation methodology, jurisdiction data availability, CV claim verification, content character profiling
+- **Infrastructure Analysis** — favicon hash generation, DNS enumeration, WHOIS investigation, reverse DNS, AS intelligence with hosting/cloud detection
+- **Certificate Intelligence** — SSL/TLS certificate history via CertSpotter + Censys (CT log aggregation), subdomain discovery, CA tracking
+- **Security Contact Discovery** — security.txt lookup (RFC 9116): contact, policy, encryption key, expiry check
+- **Web Analysis** — URLScan.io scanning and historical data, BuiltWith technology lookup (free API)
+- **Threat Intelligence** — Shodan searches, VirusTotal domain/IP reports, infrastructure mapping, multi-source correlation
+- **Tech-Stack Intelligence** — ATS discovery (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio + 6 more), job-posting keyword extraction, GitHub org recon (repos, dep files, CI workflows), Wayback Machine fallback, synthesis profile
+- **LLM / AI Surface Recon** — passive fingerprinting of LLM-powered apps (provider, framework, model strings, leaked credentials, MCP exposure); benign chat probe; authorization-gated OWASP LLM Top 10:2025 probes
+- **Privacy & Data Handling** — privacy policy discovery and OPP-115 classification; jurisdiction detection (GDPR/CCPA/LGPD/PIPL/PIPEDA) with compliance gap analysis; AI training clause detection; tracker scan (~30 entries) with enforcement-backed contradiction detection
+- **Research & Web Search** — privacy-neutral web search (Brave), research-agent–optimised structured results (Tavily), AI-synthesised answers with citations (Perplexity); all optional, key-gated
+- **People & Company OSINT** — people investigation methodology, jurisdiction data availability, CV claim verification, content character profiling
 
 ## Requirements
 
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- `GITHUB_TOKEN` (optional, for `github_recon` / `tech_stack`; raises rate limit from 60 to 5000 req/h)
-- `CERTSPOTTER_API_KEY` (optional, for `certificate_info`; free tier works without it, key raises rate limit)
-- `CENSYS_API_ID` + `CENSYS_API_SECRET` (optional, for secondary CT source in `certificate_info`)
-- `SHODAN_API_KEY` (optional, for `shodan_search`)
-- `URLSCAN_API_KEY` (optional, for `urlscan_history` / `urlscan_submit`)
-- `BUILTWITH_API_KEY` (optional, for `builtwith_lookup`; free at [builtwith.com/signup](https://builtwith.com/signup), rate limit 1 req/s)
-- `VIRUSTOTAL_API_KEY` (optional, for `vt_domain_report` / `vt_ip_report`; free tier rate-limited, e.g. 4 req/min)
+
+### API Keys
+
+All keys are optional. Tools that require a missing key return a structured error with a signup link.
+
+| Key | Enables | Notes |
+|-----|---------|-------|
+| `SHODAN_API_KEY` | `shodan_search` | [shodan.io](https://shodan.io) |
+| `URLSCAN_API_KEY` | `urlscan_history`, `urlscan_submit` | [urlscan.io](https://urlscan.io) |
+| `VIRUSTOTAL_API_KEY` | `vt_domain_report`, `vt_ip_report` | Free tier: ~4 req/min. [virustotal.com](https://www.virustotal.com) |
+| `BUILTWITH_API_KEY` | `builtwith_lookup` | Free at [builtwith.com/signup](https://builtwith.com/signup). Rate limit: 1 req/s |
+| `BRAVE_API_KEY` | `web_search` | [api.search.brave.com](https://api.search.brave.com) |
+| `TAVILY_API_KEY` | `research` | [tavily.com](https://tavily.com) |
+| `PERPLEXITY_API_KEY` | `research_synthesis` | [perplexity.ai/api](https://www.perplexity.ai/api) |
+| `CERTSPOTTER_API_KEY` | `certificate_info` | Optional — free tier works without it; key raises rate limit. [sslmate.com/certspotter](https://sslmate.com/certspotter/) |
+| `CENSYS_API_ID` + `CENSYS_API_SECRET` | `certificate_info` | Secondary CT source. [search.censys.io](https://search.censys.io) |
+| `GITHUB_TOKEN` | `github_recon`, `tech_stack` | Raises rate limit from 60 to 5000 req/h. [github.com/settings/tokens](https://github.com/settings/tokens) |
 
 ## Installation
 
@@ -60,12 +71,15 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
   "mcpServers": {
     "cybersleuth": {
       "command": "uv",
-      "args": ["run", "--directory", "/absolute/path/to/cybersleuth", "server.py"],
+      "args": ["run", "--directory", "/absolute/path/to/cybersleuth", "cybersleuth"],
       "env": {
         "SHODAN_API_KEY": "your-shodan-api-key",
         "URLSCAN_API_KEY": "your-urlscan-api-key",
+        "VIRUSTOTAL_API_KEY": "your-virustotal-api-key",
         "BUILTWITH_API_KEY": "your-builtwith-api-key",
-        "VIRUSTOTAL_API_KEY": "your-virustotal-api-key"
+        "BRAVE_API_KEY": "your-brave-api-key",
+        "TAVILY_API_KEY": "your-tavily-api-key",
+        "PERPLEXITY_API_KEY": "your-perplexity-api-key"
       }
     }
   }
@@ -75,16 +89,18 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 ### Claude Code
 
 ```bash
-claude mcp add cybersleuth -- uv run --directory /absolute/path/to/cybersleuth server.py
+claude mcp add cybersleuth -- uv run --directory /absolute/path/to/cybersleuth cybersleuth
 ```
 
-Set the API keys in your shell environment:
+Set API keys in your MCP config or shell environment:
 
 ```bash
 export SHODAN_API_KEY='your-shodan-api-key'
 export URLSCAN_API_KEY='your-urlscan-api-key'
-export BUILTWITH_API_KEY='your-builtwith-api-key'
 export VIRUSTOTAL_API_KEY='your-virustotal-api-key'
+export BRAVE_API_KEY='your-brave-api-key'
+export TAVILY_API_KEY='your-tavily-api-key'
+export PERPLEXITY_API_KEY='your-perplexity-api-key'
 ```
 
 ### Skill File & Agent Instructions
@@ -93,61 +109,93 @@ Load `cybersleuth.md` as the system prompt or project instructions in your chat 
 
 The same content is also exposed by the MCP server as resources:
 
-- **`cybersleuth://instructions`** — skill/agent instructions (persona, methodology, example queries)
-- **`cybersleuth://reports`** — report generation guide (DDR structure, confidence framework, eisvogel/pandoc templates)
-- **`cybersleuth://people-osint`** — people OSINT methodology (jurisdiction data availability, CV claim scorecard, content character profiling)
-- **Prompt:** "CyberSleuth system instructions" — load the instructions as an MCP prompt (for clients that support MCP prompts)
+| Resource | Description |
+|----------|-------------|
+| `cybersleuth://instructions` | Skill/agent instructions (persona, methodology, example queries) |
+| `cybersleuth://reports` | Report generation guide (DDR structure, confidence framework, eisvogel/pandoc templates) |
+| `cybersleuth://people-osint` | People OSINT methodology (jurisdiction guide, CV claim scorecard, character profiling) |
+| `cybersleuth://company-ddr` | Company DDR workflow: 5-phase playbook producing a due diligence PDF |
+| `cybersleuth://tech-stack-recon` | Tech-stack intelligence methodology: ATS discovery, job-posting extraction, GitHub recon |
+| `cybersleuth://llm-recon` | LLM/AI surface recon methodology: passive signals, OWASP LLM Top 10:2025 mapping |
+| `cybersleuth://privacy-analysis` | Privacy & data handling methodology: OPP-115, jurisdiction gap analysis, tracker risk DB |
+
+**Prompt:** `CyberSleuth system instructions` — load the instructions as an MCP prompt (for clients that support MCP prompts).
 
 ### Methodology Docs
 
-The `docs/` directory contains standalone reference guides stripped of agent-specific orchestration:
+The `docs/` directory contains standalone reference guides:
 
 - `docs/ethics.md` — OSINT ethics and legal boundaries
 - `docs/methodology.md` — intelligence cycle, confidence levels, quality gates
 - `docs/domain-workflow.md` — step-by-step domain investigation phases
 - `docs/company-workflow.md` — step-by-step company OSINT phases
 - `docs/entity-workflow.md` — step-by-step entity/threat investigation phases
-- `docs/company-ddr.md` — **Company DDR playbook**: full 5-phase due diligence workflow (domain discovery → infra recon → 12-agent parallel research fleet → claims verification → DDR PDF); PAI-portable, runs in any Claude Code session with CyberSleuth MCP installed; also available as `cybersleuth://company-ddr` resource
+- `docs/company-ddr.md` — Company DDR playbook (also available as `cybersleuth://company-ddr`)
+- `docs/tech-stack-recon.md` — Tech-stack intelligence methodology
+- `docs/llm-recon.md` — LLM/AI surface reconnaissance methodology
+- `docs/privacy-analysis.md` — Privacy & data handling analysis methodology
 
 ## Available Tools
 
+### Infrastructure
+
 | Tool | Description |
-|---|---|
-| `whois_lookup` | WHOIS registration data for a domain or IP (region-aware: RIR for IPs, TLD fallback for domains; optional server=) |
+|------|-------------|
+| `whois_lookup` | WHOIS registration data for a domain or IP (RIR-aware for IPs, TLD fallback; optional `server=`) |
 | `dns_records` | DNS enumeration (A, AAAA, MX, NS, TXT, SOA, CNAME, PTR, SRV, CAA) |
 | `reverse_dns` | Reverse DNS lookup for an IP address |
 | `as_intelligence` | ASN, AS org, country, and hosting/cloud classification for an IP or domain |
-| `certificate_info` | SSL/TLS certificate history from CertSpotter (+ Censys if `CENSYS_API_ID`/`CENSYS_API_SECRET` set) |
-| `security_txt` | Fetch and parse security.txt for a domain (RFC 9116) |
+
+### Certificate & Web
+
+| Tool | Description |
+|------|-------------|
+| `certificate_info` | SSL/TLS certificate history from CertSpotter (+ Censys if credentials set); subdomain discovery |
+| `security_txt` | Fetch and parse security.txt for a domain (RFC 9116): contact, policy, encryption key, expiry |
 | `favicon_hash` | Favicon hashes for Shodan infrastructure searches |
-| `shodan_search` | Search Shodan for internet-connected devices |
-| `urlscan_history` | Historical URLScan.io scan data |
+| `urlscan_history` | Historical URLScan.io scan data for a URL or domain |
 | `urlscan_submit` | Submit a URL for live scanning on URLScan.io |
-| `builtwith_lookup` | Technology groups and categories for a domain (BuiltWith Free API; 1 req/s) |
-| `vt_domain_report` | VirusTotal reputation and analysis stats for a domain (rate-limited on free tier) |
-| `vt_ip_report` | VirusTotal reputation and analysis stats for an IP address (rate-limited on free tier) |
-| `career_sources` | Discover ATS platforms and career pages for a domain (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio + 6 more); Wayback Machine fallback |
-| `job_postings` | Fetch job postings from a discovered ATS board URL and extract tech keywords by category; pass the `board_url` returned by `career_sources` |
-| `github_recon` | GitHub org recon: repos, language distribution, dep manifests, CI/CD workflow tooling signals; set `GITHUB_TOKEN` for higher rate limit |
-| `tech_stack` | Synthesise a full tech-stack profile for a domain: orchestrates career_sources → job_postings → github_recon, merges keywords with source attribution |
-| `llm_fingerprint` | Passive LLM-app fingerprint: provider, framework, model strings, leaked client-side credentials, MCP exposure, OWASP LLM Top 10:2025 findings |
-| `llm_probe_public_chat` | Send one benign user message to a discovered public chat endpoint; detects model self-disclosure |
-| `llm_security_probe` | **Authorization-gated.** OWASP LLM01/02/07 probe battery (refuses without `authorized=True` + `authorization_note`) |
-| `privacy_policy` | Discover and analyse privacy policy/ToS/cookie policy: jurisdiction detection, OPP-115 categories, AI training clause flags, per-jurisdiction compliance gap analysis |
-| `tracker_scan` | Scan homepage for ~30 third-party trackers (Meta Pixel, GA4, Segment, Hotjar, FingerprintJS, etc.); enforcement-backed contradiction hints; high-risk context (healthcare, finance, children) escalation |
+| `builtwith_lookup` | Technology groups and categories (BuiltWith Free API; 1 req/s) |
 
-### Resources & Prompts
+### Threat Intelligence
 
-| Type | Identifier | Description |
-|------|-------------|-------------|
-| Resource | `cybersleuth://instructions` | Skill/agent instructions (persona, methodology, example queries) |
-| Resource | `cybersleuth://reports` | Report generation guide (DDR structure, confidence framework, templates) |
-| Resource | `cybersleuth://people-osint` | People OSINT methodology (jurisdiction guide, CV scorecard, character profiling) |
-| Resource | `cybersleuth://company-ddr` | Company DDR workflow: 5-phase playbook for due diligence investigations producing a DDR PDF |
-| Resource | `cybersleuth://tech-stack-recon` | Tech-stack intelligence methodology: ATS discovery, job-posting extraction, GitHub recon, LinkedIn dorks, Wayback fallback, confidence calibration |
-| Resource | `cybersleuth://llm-recon` | LLM / AI surface reconnaissance methodology: passive fingerprint signals, OWASP LLM Top 10:2025 mapping, authorization tiers, research citations |
-| Resource | `cybersleuth://privacy-analysis` | Privacy & data handling methodology: OPP-115 categories, GDPR/CCPA/LGPD/PIPL/PIPEDA gap analysis, AI training detection, tracker risk DB, contradiction patterns |
-| Prompt | CyberSleuth system instructions | Load instructions as a prompt for use as system or project instructions |
+| Tool | Description |
+|------|-------------|
+| `shodan_search` | Search Shodan for internet-connected devices and services |
+| `vt_domain_report` | VirusTotal reputation and analysis stats for a domain |
+| `vt_ip_report` | VirusTotal reputation and analysis stats for an IP address |
+
+### Tech-Stack Intelligence
+
+| Tool | Description |
+|------|-------------|
+| `career_sources` | Discover ATS platforms and career pages (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio + 6 more); Wayback Machine fallback |
+| `job_postings` | Fetch job postings from an ATS board URL and extract tech keywords by category |
+| `github_recon` | GitHub org recon: repos, languages, dep manifests, CI/CD tooling signals |
+| `tech_stack` | Full tech-stack profile: orchestrates `career_sources` → `job_postings` → `github_recon`, merges signals with source attribution |
+
+### LLM / AI Surface Recon
+
+| Tool | Description |
+|------|-------------|
+| `llm_fingerprint` | Passive fingerprint: provider, framework, model strings, leaked credentials, MCP exposure, OWASP LLM Top 10:2025 findings |
+| `llm_probe_public_chat` | Send one benign message to a public chat endpoint; detects model self-disclosure |
+| `llm_security_probe` | **Authorization-gated.** OWASP LLM01/02/07 probe battery (requires `authorized=True` + `authorization_note`) |
+
+### Privacy & Data Handling
+
+| Tool | Description |
+|------|-------------|
+| `privacy_policy` | Discover and analyse privacy/ToS/cookie policy: jurisdiction detection, OPP-115 categories, AI training clause flags, compliance gap analysis |
+| `tracker_scan` | Scan homepage for ~30 third-party trackers (Meta Pixel, GA4, Segment, Hotjar, FingerprintJS, etc.); enforcement-backed contradiction hints; context escalation (healthcare, finance, children) |
+
+### Research & Web Search
+
+| Tool | Description |
+|------|-------------|
+| `web_search` | Privacy-neutral web search via Brave — no filter bubbles. Best for reputation checks, entity lookups, news. Requires `BRAVE_API_KEY` |
+| `research` | Research-agent–optimised search via Tavily — structured results + synthesised answer. Best for iterative investigation and multi-source corroboration. Requires `TAVILY_API_KEY` |
+| `research_synthesis` | AI-synthesised answer with numbered citations via Perplexity. Best for business intel summaries, regulatory lookups, breach context. Requires `PERPLEXITY_API_KEY` |
 
 ## Architecture
 
@@ -163,14 +211,14 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 ┌─────────────────────────────────────────┼────────────────────┐
 │  YOUR LOCAL MACHINE                     │                    │
 │  ┌──────────────────────────────────────▼─────────────────┐  │
-│  │  server.py (MCP Server)                                │  │
-│  │  └── tools.py (OSINT functions)                        │  │
+│  │  server.py (MCP Server — 25 tools, 7 resources)        │  │
+│  │  └── tools.py (OSINT + research functions)             │  │
 │  └──────────────────────┬─────────────────────────────────┘  │
 │                         │                                    │
 │  ┌──────────────────────▼─────────────────────────────────┐  │
-│  │  Environment Variables                                 │  │
-│  │  SHODAN_API_KEY, URLSCAN_API_KEY, BUILTWITH_API_KEY,   │
-│  │  VIRUSTOTAL_API_KEY                                    │  │
+│  │  Environment Variables (all optional)                  │  │
+│  │  SHODAN · URLSCAN · VIRUSTOTAL · BUILTWITH · BRAVE     │  │
+│  │  TAVILY · PERPLEXITY · CERTSPOTTER · CENSYS · GITHUB   │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
                           │
@@ -178,24 +226,28 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 ┌──────────────────────────────────────────────────────────────┐
 │  External APIs (HTTPS)                                       │
 │  CertSpotter · Censys · Shodan · URLScan.io · BuiltWith ·    │
-│  VirusTotal · WHOIS · DNS                                    │
+│  VirusTotal · Brave Search · Tavily · Perplexity ·           │
+│  WHOIS · DNS · GitHub · IPinfo                               │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Sources & Attribution
 
-- Certificate data: [CertSpotter](https://sslmate.com/certspotter/) (primary, free tier; set `CERTSPOTTER_API_KEY` for higher rate limits) and [Censys](https://search.censys.io) (secondary, requires `CENSYS_API_ID` + `CENSYS_API_SECRET`)
+- Certificate data: [CertSpotter](https://sslmate.com/certspotter/) (primary) + [Censys](https://search.censys.io) (secondary)
 - Network intelligence: [Shodan](https://shodan.io)
 - URL scanning: [URLScan.io](https://urlscan.io)
 - Technology lookup: [BuiltWith](https://builtwith.com) (Free API)
-- DNS information: Public DNS services
-- WHOIS data: Public WHOIS servers (RIR- and TLD-aware)
 - Threat reputation: [VirusTotal](https://www.virustotal.com) (API v3)
-- Ransomware victim listings: [ransomware.live](https://www.ransomware.live) (manual web fetch; no API yet)
+- Web search: [Brave Search](https://api.search.brave.com)
+- Research: [Tavily](https://tavily.com)
+- AI synthesis: [Perplexity](https://www.perplexity.ai)
+- DNS: Public DNS services
+- WHOIS: Public WHOIS servers (RIR- and TLD-aware)
+- Ransomware victim listings: [ransomware.live](https://www.ransomware.live) (manual web fetch)
 
 ## Security & OPSEC
 
-- API keys are stored as environment variables
+- API keys are stored as environment variables — never hardcoded
 - All external API queries may be logged by the respective services
 - Services track IP addresses and usage patterns
 - Consider using approved proxies for sensitive research
@@ -204,4 +256,4 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 
 ## License
 
-MIT -- see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE) for details.
