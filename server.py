@@ -18,6 +18,9 @@ from tools import (
     get_vt_domain_report,
     get_vt_ip_report,
     get_as_intelligence,
+    llm_fingerprint as _llm_fingerprint_impl,
+    llm_probe_public_chat as _llm_probe_public_chat_impl,
+    llm_security_probe as _llm_security_probe_impl,
 )
 
 mcp = FastMCP(
@@ -36,6 +39,7 @@ _SKILL_FILE = Path(__file__).resolve().parent / "cybersleuth.md"
 _REPORTS_FILE = Path(__file__).resolve().parent / "reports.md"
 _PEOPLE_FILE = Path(__file__).resolve().parent / "people-osint.md"
 _COMPANY_DDR_FILE = Path(__file__).resolve().parent / "docs" / "company-ddr.md"
+_LLM_RECON_FILE = Path(__file__).resolve().parent / "docs" / "llm-recon.md"
 
 
 def _get_skill_content() -> str:
@@ -56,6 +60,11 @@ def _get_people_content() -> str:
 def _get_company_ddr_content() -> str:
     """Return company DDR workflow from docs/company-ddr.md."""
     return _COMPANY_DDR_FILE.read_text(encoding="utf-8")
+
+
+def _get_llm_recon_content() -> str:
+    """Return LLM reconnaissance methodology from docs/llm-recon.md."""
+    return _LLM_RECON_FILE.read_text(encoding="utf-8")
 
 
 @mcp.resource("cybersleuth://instructions")
@@ -80,6 +89,12 @@ def people_osint_resource() -> str:
 def company_ddr_resource() -> str:
     """Company DDR workflow: 5-phase due diligence playbook (domain discovery, infra recon, 12-agent research fleet, claims verification, DDR PDF). PAI-portable — uses CyberSleuth MCP tools and Claude Code Agent calls."""
     return _get_company_ddr_content()
+
+
+@mcp.resource("cybersleuth://llm-recon")
+def llm_recon_resource() -> str:
+    """LLM / AI surface reconnaissance methodology: passive fingerprint signals, OWASP LLM Top 10:2025 mapping, authorization tiers, research citations."""
+    return _get_llm_recon_content()
 
 
 @mcp.prompt(title="CyberSleuth system instructions")
@@ -286,6 +301,62 @@ def vt_ip_report(ip: str) -> dict:
     if not api_key:
         return {"error": "VIRUSTOTAL_API_KEY environment variable is not set"}
     return get_vt_ip_report(ip, api_key)
+
+
+@mcp.tool()
+def llm_fingerprint(url: str) -> dict:
+    """Passively fingerprint an LLM-powered application (no prompts sent).
+
+    Inspects response headers, CSP, top-level JS bundles, and the error shape
+    of common LLM API paths. Detects providers (OpenAI, Anthropic, Google,
+    Mistral, Cohere, Llama, Ollama), frameworks (Vercel AI SDK, LangChain,
+    LlamaIndex, MCP, LangSmith, Helicone), hardcoded model strings, and leaked
+    client-side credentials. Surfaces OWASP LLM Top 10:2025 findings.
+
+    Methodology: cybersleuth://llm-recon
+
+    Args:
+        url: Target URL (e.g. https://example.com/chat)
+    """
+    return _llm_fingerprint_impl(url)
+
+
+@mcp.tool()
+def llm_probe_public_chat(url: str, query: str = "Hello") -> dict:
+    """Send one benign user-style message to a discovered public chat endpoint.
+
+    Tries Vercel AI SDK, OpenAI-compatible, and Anthropic shapes in order.
+    Returns the first reachable endpoint's response with model self-disclosure
+    detection. Intended for endpoints the target intentionally exposes to
+    anonymous users. Stop if rate-limited or auth-walled.
+
+    Methodology: cybersleuth://llm-recon
+
+    Args:
+        url: Base URL of the target application
+        query: Benign user message (default "Hello"). Keep non-adversarial.
+    """
+    return _llm_probe_public_chat_impl(url, query)
+
+
+@mcp.tool()
+def llm_security_probe(url: str, authorized: bool = False, authorization_note: str = "") -> dict:
+    """AUTHORIZATION REQUIRED. Run a small OWASP-mapped probe battery against an LLM endpoint.
+
+    Refuses without authorized=True AND non-empty authorization_note. Sends
+    one query per probe (LLM07 system prompt extraction, LLM01 instruction
+    isolation, LLM02 training data probe). Does not chain, retry, or attempt
+    GCG suffixes. For deep red-teaming use garak / PyRIT / promptfoo under
+    formal engagement.
+
+    Methodology: cybersleuth://llm-recon
+
+    Args:
+        url: Target URL with a chat endpoint
+        authorized: Must be True. Caller asserts written authorization to test.
+        authorization_note: Free-text scope (engagement ID, asset, owner) — recorded for audit.
+    """
+    return _llm_security_probe_impl(url, authorized, authorization_note)
 
 
 if __name__ == "__main__":

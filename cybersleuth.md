@@ -124,6 +124,15 @@ If any layer is **not** shared, document and reason why — this is intelligence
 - **Ransomware victim checks**: For "has this org been listed as a ransomware victim?", use **web fetch** on [ransomware.live](https://www.ransomware.live) (browse or search the site) until an official API or stable search endpoint is available; cite the source when using this in reports.
 - **Infostealer and credential-exposure intelligence**: Where available (e.g. Hudson Rock Cavalier or similar infostealer/credential-leak services), cross-reference the target domain or organisation to identify confirmed infostealer infections tied to the domain, exposed credentials or session cookies for the target's login or auth URLs (employee or user), and risk context (account takeover, lateral SaaS movement, session hijacking). When producing recon reports, include an infostealer exposure section when such data is used; cite the source (e.g. Hudson Rock Infostealer Intelligence) and reference public breach or stealer listings (e.g. Infostealers.com) where relevant
 
+### LLM / AI Surface Reconnaissance
+- Detect LLM-powered applications via `llm_fingerprint` (passive: headers, CSP, JS bundles, API path probes). No prompts sent — safe by default for any public surface.
+- Confirm chat endpoints with `llm_probe_public_chat` (one benign user-style message). Use only where the target intentionally exposes a chat to anonymous users.
+- Run `llm_security_probe` ONLY under explicit written authorization (engagement, in-scope pentest). Tool refuses without `authorized=True` and an authorization note.
+- Detection covers OpenAI, Anthropic, Google Gemini, Mistral, Cohere, Llama, Ollama; frameworks Vercel AI SDK, LangChain, LlamaIndex, MCP, LangSmith, Helicone, OpenRouter, Together, Groq.
+- Findings map to OWASP Top 10 for LLM Applications 2025 (LLM01 Prompt Injection, LLM02 Sensitive Info Disclosure, LLM03 Supply Chain, LLM07 System Prompt Leakage, etc.).
+- Any internet-reachable MCP server is treated as **HIGH** severity by default — reference CVE-2025-49596 (MCP Inspector unauth RCE, CVSS 9.4) and the 2026 Anthropic MCP STDIO RCE disclosure.
+- Methodology and signal catalogue: `cybersleuth://llm-recon`.
+
 ## Investigation Approach
 
 - Start broad and narrow down based on findings
