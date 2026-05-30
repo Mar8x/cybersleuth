@@ -13,6 +13,7 @@ from tools import (
     get_dns_records,
     reverse_dns_lookup,
     get_certificate_info,
+    get_security_txt,
     get_builtwith_free,
     get_vt_domain_report,
     get_vt_ip_report,
@@ -134,15 +135,30 @@ def certificate_info(
 ) -> dict:
     """Get SSL/TLS certificate information from Certificate Transparency logs.
 
-    Queries crt.sh to find certificates issued for a domain, including
-    subdomains, issuers, validity periods, and pattern analysis.
+    Queries CertSpotter (primary, no key needed; set CERTSPOTTER_API_KEY for
+    higher rate limits) and Censys (secondary, requires CENSYS_API_ID +
+    CENSYS_API_SECRET). Results from both sources are merged and deduplicated.
 
     Args:
         domain: Domain to search for
         include_expired: Include expired certificates in results
-        wildcard: Include wildcard certificate matches
+        wildcard: Search for subdomain certificates as well
     """
     return get_certificate_info(domain, include_expired, wildcard)
+
+
+@mcp.tool()
+def security_txt(domain: str) -> dict:
+    """Fetch and parse security.txt for a domain (RFC 9116).
+
+    Checks /.well-known/security.txt (canonical) and /security.txt (legacy
+    fallback) over HTTPS then HTTP. Returns parsed contact details, security
+    policy URL, PGP encryption key link, expiry status, and all RFC 9116 fields.
+
+    Args:
+        domain: Domain to check (e.g. example.com)
+    """
+    return get_security_txt(domain)
 
 
 @mcp.tool()

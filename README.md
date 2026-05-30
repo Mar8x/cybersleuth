@@ -14,7 +14,8 @@ CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-inves
 ## Features
 
 - **Infrastructure Analysis** -- favicon hash generation, DNS enumeration, WHOIS investigation, reverse DNS, AS (Autonomous System) intelligence with hosting/cloud detection
-- **Certificate Intelligence** -- SSL/TLS certificate history via crt.sh, subdomain discovery, CA tracking
+- **Certificate Intelligence** -- SSL/TLS certificate history via CertSpotter + Censys (CT log aggregation), subdomain discovery, CA tracking
+- **Security Contact Discovery** -- security.txt lookup (RFC 9116): contact, policy, encryption key, expiry check
 - **Web Analysis** -- URLScan.io scanning and historical data, BuiltWith technology lookup (free API)
 - **Threat Intelligence** -- Shodan searches, VirusTotal domain/IP reports, infrastructure mapping, multi-source correlation
 - **People & Company OSINT** -- people investigation methodology, jurisdiction data availability, CV claim verification, content character profiling
@@ -23,10 +24,12 @@ CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-inves
 
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- Shodan API key (optional, for `shodan_search`)
-- URLScan.io API key (optional, for `urlscan_history` / `urlscan_submit`)
-- BuiltWith API key (optional, for `builtwith_lookup`; free at [builtwith.com/signup](https://builtwith.com/signup), rate limit 1 req/s)
-- VirusTotal API key (optional, for `vt_domain_report` / `vt_ip_report`; free tier rate-limited, e.g. 4 req/min)
+- `CERTSPOTTER_API_KEY` (optional, for `certificate_info`; free tier works without it, key raises rate limit)
+- `CENSYS_API_ID` + `CENSYS_API_SECRET` (optional, for secondary CT source in `certificate_info`)
+- `SHODAN_API_KEY` (optional, for `shodan_search`)
+- `URLSCAN_API_KEY` (optional, for `urlscan_history` / `urlscan_submit`)
+- `BUILTWITH_API_KEY` (optional, for `builtwith_lookup`; free at [builtwith.com/signup](https://builtwith.com/signup), rate limit 1 req/s)
+- `VIRUSTOTAL_API_KEY` (optional, for `vt_domain_report` / `vt_ip_report`; free tier rate-limited, e.g. 4 req/min)
 
 ## Installation
 
@@ -110,7 +113,8 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | `dns_records` | DNS enumeration (A, AAAA, MX, NS, TXT, SOA, CNAME, PTR, SRV, CAA) |
 | `reverse_dns` | Reverse DNS lookup for an IP address |
 | `as_intelligence` | ASN, AS org, country, and hosting/cloud classification for an IP or domain |
-| `certificate_info` | SSL/TLS certificate history from crt.sh |
+| `certificate_info` | SSL/TLS certificate history from CertSpotter (+ Censys if `CENSYS_API_ID`/`CENSYS_API_SECRET` set) |
+| `security_txt` | Fetch and parse security.txt for a domain (RFC 9116) |
 | `favicon_hash` | Favicon hashes for Shodan infrastructure searches |
 | `shodan_search` | Search Shodan for internet-connected devices |
 | `urlscan_history` | Historical URLScan.io scan data |
@@ -157,14 +161,14 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
                           ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  External APIs (HTTPS)                                       │
-│  crt.sh · Shodan · URLScan.io · BuiltWith · VirusTotal ·     │
-│  WHOIS · DNS                                                 │
+│  CertSpotter · Censys · Shodan · URLScan.io · BuiltWith ·    │
+│  VirusTotal · WHOIS · DNS                                    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Sources & Attribution
 
-- Certificate data: [crt.sh](https://crt.sh) (Certificate Transparency logs)
+- Certificate data: [CertSpotter](https://sslmate.com/certspotter/) (primary, free tier; set `CERTSPOTTER_API_KEY` for higher rate limits) and [Censys](https://search.censys.io) (secondary, requires `CENSYS_API_ID` + `CENSYS_API_SECRET`)
 - Network intelligence: [Shodan](https://shodan.io)
 - URL scanning: [URLScan.io](https://urlscan.io)
 - Technology lookup: [BuiltWith](https://builtwith.com) (Free API)

@@ -121,7 +121,7 @@ Search EPO Espacenet, WIPO PATENTSCOPE, USPTO, [jurisdiction patent office] for:
 
 ### Certificate Transparency Logs
 ```
-Search crt.sh for:
+Search Certificate Transparency logs (CertSpotter / Censys) for:
 - *.[domain1]
 - *.[domain2]
 Check certificate issue dates, CAs used, SANs, and cross-domain certificates.
@@ -673,7 +673,7 @@ The Sources Index is an unnumbered section `{-}` at the end of the report (befor
 ### For Due Diligence Reports
 
 Organize sources into:
-- **Domain/Infrastructure Tools Used** -- list each OSINT tool with query counts (e.g., "WHOIS lookups (7 domains)", "Certificate Transparency (crt.sh) -- 5 domains")
+- **Domain/Infrastructure Tools Used** -- list each OSINT tool with query counts (e.g., "WHOIS lookups (7 domains)", "Certificate Transparency (CertSpotter/Censys) -- 5 domains")
 - **Web Research** -- list registries, databases, and sources consulted (e.g., "UK Companies House", "Swiss Zefix", "Google Patents")
 
 ### For Benchmarking Reports

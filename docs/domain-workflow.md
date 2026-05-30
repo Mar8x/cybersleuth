@@ -24,9 +24,10 @@
 |-------------------|---------|
 | **WHOIS/Registration** | DomainTools, WHOIS databases, ViewDNS |
 | **DNS Enumeration** | SecurityTrails, DNSDumpster, Robtex, ViewDNS |
-| **Subdomain Discovery** | crt.sh, SecurityTrails, DNSDumpster, subfinder, amass |
+| **Subdomain Discovery** | CertSpotter, Censys, SecurityTrails, DNSDumpster, subfinder, amass |
 | **Technology/Hosting** | BuiltWith, Wappalyzer, Netcraft, Shodan, Censys |
-| **Certificate Transparency** | crt.sh, CertStream, Cert Spotter |
+| **Certificate Transparency** | CertSpotter (primary), Censys (secondary), CertStream |
+| **Security Contact** | security.txt (RFC 9116) |
 | **Reputation/Threat Intel** | VirusTotal, URLScan.io, AbuseIPDB, GreyNoise, PhishTank |
 | **Breach/Leak** | HIBP, Intelligence X |
 | **Historical** | SecurityTrails (historical DNS), Wayback Machine |
@@ -80,7 +81,7 @@
 
 **Execute multiple enumeration techniques:**
 
-1. **Certificate Transparency (crt.sh)** — All certificates ever issued for the domain
+1. **Certificate Transparency (CertSpotter + Censys)** — All certificates ever issued for the domain
 2. **DNS brute-force (subfinder)** — Common subdomain wordlists
 3. **Passive DNS (SecurityTrails)** — Historical subdomain records
 4. **DNS aggregator (DNSDumpster)** — Combined passive intelligence
@@ -130,21 +131,24 @@
 
 ## Phase 6: Certificate Transparency
 
-**crt.sh Analysis:**
-- All certificates ever issued for the domain
+**CertSpotter + Censys (`certificate_info`):**
+- All certificates ever issued for the domain (merged, deduplicated across both sources)
 - Wildcard certificates (*.domain.com)
 - SAN (Subject Alternative Name) entries — reveals related domains
 - Certificate issuers (Let's Encrypt vs. commercial CA)
 - Certificate timeline (when were certs first issued?)
-
-**CertStream / Cert Spotter:**
-- Real-time certificate issuance monitoring
-- Newly registered subdomains via CT logs
+- `sources_used` in results shows which CT sources responded
 
 **Analysis:**
 - Do SAN entries reveal hidden subdomains or related domains?
 - When was the first certificate issued? (Domain age indicator)
 - Are there certificates for non-obvious domains? (Shadow IT)
+
+**Security Contact (`security_txt`):**
+- Fetch and parse security.txt (RFC 9116) for the target domain
+- Contact channels (email, URL, phone) for responsible disclosure
+- Security policy URL, PGP encryption key link, disclosure deadline
+- Check `is_expired` field — an expired security.txt is a maintenance red flag
 
 ---
 

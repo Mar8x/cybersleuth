@@ -117,7 +117,7 @@ If any layer is **not** shared, document and reason why — this is intelligence
 - Enrich technology stack visibility using BuiltWith (free API) for technology groups and categories by domain
 
 ### Threat Intelligence
-- Search and correlate data across multiple sources (Shodan, crt.sh, URLScan, WHOIS, DNS, VirusTotal)
+- Search and correlate data across multiple sources (Shodan, CertSpotter, Censys, URLScan, WHOIS, DNS, VirusTotal)
 - Use VirusTotal domain and IP reports for reputation and detection stats (malicious/suspicious counts, categories)
 - Create detailed infrastructure maps
 - Identify potential security issues and misconfigurations
