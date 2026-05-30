@@ -182,7 +182,36 @@
 
 ---
 
-## Phase 8: Synthesis
+## Phase 8: LLM / AI Surface Assessment
+
+Run this phase whenever the target shows signs of AI/LLM usage — `chat.*`, `ai.*`, `copilot.*` subdomains in CT logs, AI SDK references in JS bundles, or AI-related job postings / GitHub repos. The methodology and signal catalogue live in `cybersleuth://llm-recon`.
+
+**Three authorization tiers, three tools:**
+
+| Tool | Scope | When to use |
+|------|-------|-------------|
+| `llm_fingerprint(url)` | Passive — observes headers, CSP, JS bundles, API path error shapes | Always safe; default for any LLM-related surface |
+| `llm_probe_public_chat(url, query="Hello")` | Benign — one neutral user-style message | Public chat surfaces the target exposes to anonymous users; confirm liveness + capture model self-disclosure |
+| `llm_security_probe(url, authorized=True, authorization_note=...)` | Authorization-gated — OWASP LLM01/02/07 probes | Only under written authorization (engagement, in-scope pentest) |
+
+**What to record per finding:**
+- Provider(s) and framework(s) detected, with source attribution (header / CSP / JS / api-path)
+- Model strings and likely model family
+- Leaked client-side credentials (redact in reports — record the kind, source URL, and last 4 chars only)
+- Public LangSmith/Helicone trace URLs (LLM02)
+- MCP exposure — any internet-reachable MCP server is **HIGH** until proven otherwise (CVE-2025-49596 reference)
+
+**OWASP LLM Top 10:2025 mapping:** see `cybersleuth://llm-recon` for the full table.
+
+**Quality Gate:**
+- [ ] Passive fingerprint run against every LLM-related subdomain identified in Phases 4–6
+- [ ] All leaked credentials documented (with redaction) and severity-rated
+- [ ] MCP exposure separately recorded if detected
+- [ ] Active probing (tiers 2–3) used only with documented justification
+
+---
+
+## Phase 9: Synthesis
 
 **Infrastructure Map:**
 - Domain → subdomains → IPs → hosting providers
@@ -210,9 +239,10 @@
 4. Technology Stack
 5. Certificate Analysis
 6. Reputation & Threat Intel
-7. Related Domains
-8. Risk Assessment
-9. Recommendations
+7. LLM / AI Surface (when applicable)
+8. Related Domains
+9. Risk Assessment
+10. Recommendations
 
 ---
 
@@ -225,6 +255,7 @@
 - [ ] Technology fingerprinting complete
 - [ ] Certificate transparency analyzed
 - [ ] Reputation/threat intel checked
+- [ ] LLM/AI surface assessed (if applicable)
 - [ ] Related domains mapped
 - [ ] Risk score assigned
 - [ ] Report drafted
