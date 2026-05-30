@@ -20,6 +20,7 @@ CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-inves
 - **Threat Intelligence** -- Shodan searches, VirusTotal domain/IP reports, infrastructure mapping, multi-source correlation
 - **Tech-Stack Intelligence** -- ATS discovery (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio, and 6 more), job-posting keyword extraction, GitHub org recon (repos, dep files, CI workflows), Wayback Machine fallback, synthesis profile
 - **LLM / AI Surface Recon** -- passive fingerprinting of LLM-powered apps (provider, framework, model strings, leaked credentials, MCP exposure); benign chat probe; authorization-gated OWASP LLM Top 10:2025 probes
+- **Privacy & Data Handling** -- privacy policy discovery and OPP-115 classification; jurisdiction detection (GDPR/CCPA/LGPD/PIPL/PIPEDA) with compliance gap analysis; AI training clause detection (EU AI Act Art. 53); tracker scan (~30 entries) with enforcement-backed contradiction detection
 - **People & Company OSINT** -- people investigation methodology, jurisdiction data availability, CV claim verification, content character profiling
 
 ## Requirements
@@ -132,6 +133,8 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | `llm_fingerprint` | Passive LLM-app fingerprint: provider, framework, model strings, leaked client-side credentials, MCP exposure, OWASP LLM Top 10:2025 findings |
 | `llm_probe_public_chat` | Send one benign user message to a discovered public chat endpoint; detects model self-disclosure |
 | `llm_security_probe` | **Authorization-gated.** OWASP LLM01/02/07 probe battery (refuses without `authorized=True` + `authorization_note`) |
+| `privacy_policy` | Discover and analyse privacy policy/ToS/cookie policy: jurisdiction detection, OPP-115 categories, AI training clause flags, per-jurisdiction compliance gap analysis |
+| `tracker_scan` | Scan homepage for ~30 third-party trackers (Meta Pixel, GA4, Segment, Hotjar, FingerprintJS, etc.); enforcement-backed contradiction hints; high-risk context (healthcare, finance, children) escalation |
 
 ### Resources & Prompts
 
@@ -143,6 +146,7 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | Resource | `cybersleuth://company-ddr` | Company DDR workflow: 5-phase playbook for due diligence investigations producing a DDR PDF |
 | Resource | `cybersleuth://tech-stack-recon` | Tech-stack intelligence methodology: ATS discovery, job-posting extraction, GitHub recon, LinkedIn dorks, Wayback fallback, confidence calibration |
 | Resource | `cybersleuth://llm-recon` | LLM / AI surface reconnaissance methodology: passive fingerprint signals, OWASP LLM Top 10:2025 mapping, authorization tiers, research citations |
+| Resource | `cybersleuth://privacy-analysis` | Privacy & data handling methodology: OPP-115 categories, GDPR/CCPA/LGPD/PIPL/PIPEDA gap analysis, AI training detection, tracker risk DB, contradiction patterns |
 | Prompt | CyberSleuth system instructions | Load instructions as a prompt for use as system or project instructions |
 
 ## Architecture

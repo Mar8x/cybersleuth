@@ -218,7 +218,37 @@ Run this phase whenever the target shows signs of AI/LLM usage — `chat.*`, `ai
 
 ---
 
-## Phase 9: Synthesis
+## Phase 9: Privacy & Data Handling Assessment
+
+**`privacy_policy(domain)` + `tracker_scan(domain)`:**
+
+1. **Document discovery** — privacy policy, ToS, cookie policy, DPA (if published)
+2. **Jurisdiction detection** — GDPR, CCPA/CPRA, LGPD, PIPL, PIPEDA keyword markers
+3. **OPP-115 practice categories** — data collection, use, sharing, retention, security,
+   user rights, policy change, DNT, international audiences
+4. **Compliance gap analysis** — mandatory disclosure elements per jurisdiction
+   (GDPR Art. 13/14, CCPA 1798.135, etc.); missing elements flagged
+5. **AI/LLM training clause detection** — red-flag phrases graded by severity;
+   EU AI Act Art. 53 training data summary requirement (live Aug 2025)
+6. **Tracker scan** — ~30 embedded tracker entries; advertising, analytics,
+   session replay, fingerprinting, consent management, AI/LLM categories
+7. **Contradiction analysis** — stated policy vs. detected trackers:
+   - Meta Pixel + "no sharing" claim → CCPA/HIPAA flag
+   - GA4 + "no EU transfer" claim → GDPR Art. 44 violation pattern
+   - FingerprintJS + no consent banner → GDPR Recital 30 violation
+   - Advertising trackers + no consent management platform → ePrivacy breach
+8. **Cross-reference** with `tech_stack` findings, `certificate_info` subdomains
+   (`analytics.*`, `pixel.*`), and `dns_records` TXT verification tokens
+
+**Key Questions:**
+- What jurisdictions does the policy claim to cover, and what elements are missing?
+- Does the stated data sharing policy match the trackers embedded in the page?
+- Is user data used for AI/ML training? Is this disclosed?
+- Does the analytics/marketing stack corroborate or contradict privacy claims?
+
+---
+
+## Phase 10: Synthesis
 
 **Infrastructure Map:**
 - Domain → subdomains → IPs → hosting providers
@@ -232,6 +262,7 @@ Run this phase whenever the target shows signs of AI/LLM usage — `chat.*`, `ai
 - Exposed services and vulnerabilities
 - Abuse/threat intel flags
 - Breach exposure
+- Privacy compliance posture (jurisdiction gaps, tracker contradictions)
 
 **Related Domains:**
 - Same registrant
@@ -247,8 +278,9 @@ Run this phase whenever the target shows signs of AI/LLM usage — `chat.*`, `ai
 5. Certificate Analysis
 6. Reputation & Threat Intel
 7. LLM / AI Surface (when applicable)
-8. Related Domains
-9. Risk Assessment
+8. Privacy & Data Handling
+9. Related Domains
+10. Risk Assessment
 10. Recommendations
 
 ---
