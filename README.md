@@ -18,12 +18,14 @@ CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-inves
 - **Security Contact Discovery** -- security.txt lookup (RFC 9116): contact, policy, encryption key, expiry check
 - **Web Analysis** -- URLScan.io scanning and historical data, BuiltWith technology lookup (free API)
 - **Threat Intelligence** -- Shodan searches, VirusTotal domain/IP reports, infrastructure mapping, multi-source correlation
+- **Tech-Stack Intelligence** -- ATS discovery (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio, and 6 more), job-posting keyword extraction, GitHub org recon (repos, dep files, CI workflows), Wayback Machine fallback, synthesis profile
 - **People & Company OSINT** -- people investigation methodology, jurisdiction data availability, CV claim verification, content character profiling
 
 ## Requirements
 
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- `GITHUB_TOKEN` (optional, for `github_recon` / `tech_stack`; raises rate limit from 60 to 5000 req/h)
 - `CERTSPOTTER_API_KEY` (optional, for `certificate_info`; free tier works without it, key raises rate limit)
 - `CENSYS_API_ID` + `CENSYS_API_SECRET` (optional, for secondary CT source in `certificate_info`)
 - `SHODAN_API_KEY` (optional, for `shodan_search`)
@@ -122,6 +124,10 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | `builtwith_lookup` | Technology groups and categories for a domain (BuiltWith Free API; 1 req/s) |
 | `vt_domain_report` | VirusTotal reputation and analysis stats for a domain (rate-limited on free tier) |
 | `vt_ip_report` | VirusTotal reputation and analysis stats for an IP address (rate-limited on free tier) |
+| `career_sources` | Discover ATS platforms and career pages for a domain (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio + 6 more); Wayback Machine fallback |
+| `job_postings` | Fetch job postings from a known ATS and extract tech keywords by category; call `career_sources` first to get ats_type + handle |
+| `github_recon` | GitHub org recon: repos, language distribution, dep manifests, CI/CD workflow tooling signals; set `GITHUB_TOKEN` for higher rate limit |
+| `tech_stack` | Synthesise a full tech-stack profile for a domain: orchestrates career_sources → job_postings → github_recon, merges keywords with source attribution |
 
 ### Resources & Prompts
 
@@ -131,6 +137,7 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | Resource | `cybersleuth://reports` | Report generation guide (DDR structure, confidence framework, templates) |
 | Resource | `cybersleuth://people-osint` | People OSINT methodology (jurisdiction guide, CV scorecard, character profiling) |
 | Resource | `cybersleuth://company-ddr` | Company DDR workflow: 5-phase playbook for due diligence investigations producing a DDR PDF |
+| Resource | `cybersleuth://tech-stack-recon` | Tech-stack intelligence methodology: ATS discovery, job-posting extraction, GitHub recon, LinkedIn dorks, Wayback fallback, confidence calibration |
 | Prompt | CyberSleuth system instructions | Load instructions as a prompt for use as system or project instructions |
 
 ## Architecture
