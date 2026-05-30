@@ -1,5 +1,6 @@
 import codecs
 import collections
+import os
 import socket
 import datetime
 import ipaddress
@@ -18,182 +19,353 @@ import whois
 from bs4 import BeautifulSoup
 
 
+_UTC = datetime.timezone.utc
+
+
+def _parse_cert_date(s: str) -> datetime.datetime:
+    """Parse a certificate date string to a UTC-aware datetime."""
+    s = s.strip().split('[')[0].strip()
+    try:
+        dt = datetime.datetime.fromisoformat(s.replace('Z', '+00:00'))
+        return dt if dt.tzinfo else dt.replace(tzinfo=_UTC)
+    except ValueError:
+        pass
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d'):
+        try:
+            return datetime.datetime.strptime(s, fmt).replace(tzinfo=_UTC)
+        except ValueError:
+            continue
+    raise ValueError(f"Cannot parse date: {s!r}")
+
+
+def _query_certspotter(domain: str, include_subdomains: bool, api_key: Optional[str]) -> tuple:
+    """Query CertSpotter CT log aggregator. Returns (certs, error_or_None)."""
+    headers = {'User-Agent': 'CyberSleuth/1.0'}
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
+    # requests encodes list values as repeated params: expand=dns_names&expand=issuer
+    params = [
+        ('domain', domain),
+        ('include_subdomains', 'true' if include_subdomains else 'false'),
+        ('expand', 'dns_names'),
+        ('expand', 'issuer'),
+    ]
+    try:
+        resp = requests.get(
+            'https://api.certspotter.com/v1/issuances',
+            params=params,
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json(), None
+    except requests.exceptions.RequestException as e:
+        return [], str(e)
+
+
+def _query_censys(domain: str, api_id: str, api_secret: str) -> tuple:
+    """Query Censys certificate search API. Returns (hits, error_or_None)."""
+    try:
+        resp = requests.get(
+            'https://search.censys.io/api/v2/certificates/search',
+            params={'q': f'names: {domain}', 'per_page': 100},
+            auth=(api_id, api_secret),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json().get('result', {}).get('hits', []), None
+    except requests.exceptions.RequestException as e:
+        return [], str(e)
+
+
 def get_certificate_info(domain: str, include_expired: bool = False, wildcard: bool = True) -> Dict:
     """
-    Get certificate information from crt.sh.
+    Get certificate information from Certificate Transparency logs.
+
+    Queries CertSpotter (primary, always attempted; free tier available, set
+    CERTSPOTTER_API_KEY for higher rate limits) and Censys (secondary, requires
+    CENSYS_API_ID + CENSYS_API_SECRET). Results are merged and deduplicated by
+    certificate fingerprint.
 
     Args:
-        domain (str): Domain to search for
-        include_expired (bool): Include expired certificates
-        wildcard (bool): Include wildcard certificates
+        domain: Domain to search for
+        include_expired: Include expired certificates
+        wildcard: Include subdomain certificates
 
     Returns:
         Dict: Certificate information and analysis
     """
-    try:
-        # Format domain for wildcard search if enabled
-        search_domain = f"%.{domain}" if wildcard else domain
+    now = datetime.datetime.now(_UTC)
+    errors: Dict = {}
+    sources_used: List[str] = []
 
-        # Query crt.sh database
-        url = "https://crt.sh/"
-        params = {
-            'q': search_domain,
-            'output': 'json'
-        }
+    # CertSpotter — always attempted; API key optional but raises rate limit
+    cs_key = os.environ.get('CERTSPOTTER_API_KEY')
+    raw_certspotter, cs_err = _query_certspotter(domain, include_subdomains=wildcard, api_key=cs_key)
+    if cs_err:
+        errors['certspotter'] = cs_err
+    else:
+        sources_used.append('certspotter')
 
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        certificates = response.json()
+    # Censys — only attempted when credentials are present
+    censys_id = os.environ.get('CENSYS_API_ID')
+    censys_secret = os.environ.get('CENSYS_API_SECRET')
+    raw_censys: list = []
+    if censys_id and censys_secret:
+        raw_censys, censys_err = _query_censys(domain, censys_id, censys_secret)
+        if censys_err:
+            errors['censys'] = censys_err
+        else:
+            sources_used.append('censys')
 
-        # Process and categorize certificates
-        processed_certs = []
-        unique_domains = set()
-        unique_issuers = set()
-        still_valid = []
-
-        for cert in certificates:
-            # Extract common name and SANs
-            domains = set()
-            if cert.get('common_name'):
-                domains.add(cert['common_name'].lower())
-            if cert.get('name_value'):
-                # Split and clean DNS names
-                sans = re.findall(r'DNS:([\w\.-]+)', cert['name_value'])
-                domains.update([san.lower() for san in sans])
-
-            # Convert dates - handle multiple possible formats
-            try:
-                # Try ISO format first
-                not_before = datetime.datetime.fromisoformat(
-                    cert['not_before'].replace('Z', '+00:00'))
-                not_after = datetime.datetime.fromisoformat(
-                    cert['not_after'].replace('Z', '+00:00'))
-            except ValueError:
-                try:
-                    # Try standard crt.sh format
-                    not_before = datetime.datetime.strptime(
-                        cert['not_before'].split('[')[0].strip(), '%Y-%m-%d')
-                    not_after = datetime.datetime.strptime(
-                        cert['not_after'].split('[')[0].strip(), '%Y-%m-%d')
-                except ValueError:
-                    # Try another common format
-                    not_before = datetime.datetime.strptime(
-                        cert['not_before'], '%Y-%m-%d %H:%M:%S')
-                    not_after = datetime.datetime.strptime(
-                        cert['not_after'], '%Y-%m-%d %H:%M:%S')
-
-            is_valid = not_after > datetime.datetime.now()
-            if is_valid:
-                still_valid.append(cert['serial_number'])
-
-            if is_valid or include_expired:
-                cert_info = {
-                    'id': cert['id'],
-                    'serial_number': cert['serial_number'],
-                    'issuer': cert['issuer_name'],
-                    'domains': list(domains),
-                    'not_before': not_before.isoformat(),
-                    'not_after': not_after.isoformat(),
-                    'is_valid': is_valid
-                }
-                processed_certs.append(cert_info)
-
-                # Update unique sets
-                unique_domains.update(domains)
-                unique_issuers.add(cert['issuer_name'])
-
-        # Group domains by type
-        domain_categories = {
-            'apex_domains': set(),
-            'subdomains': set(),
-            'wildcards': set()
-        }
-
-        base_domain = domain.lower()
-        for d in unique_domains:
-            if '*' in d:
-                domain_categories['wildcards'].add(d)
-            elif d == base_domain:
-                domain_categories['apex_domains'].add(d)
-            else:
-                domain_categories['subdomains'].add(d)
-
-        # Analyze patterns and anomalies
-        analysis = {
-            'total_certificates': len(processed_certs),
-            'valid_certificates': len(still_valid),
-            'unique_domains': {
-                'total': len(unique_domains),
-                'apex_domains': len(domain_categories['apex_domains']),
-                'subdomains': len(domain_categories['subdomains']),
-                'wildcards': len(domain_categories['wildcards'])
-            },
-            'unique_issuers_count': len(unique_issuers),
-            'interesting_patterns': []
-        }
-
-        # Detect interesting patterns
-        interesting = []
-
-        # Check for numerous subdomains
-        if len(domain_categories['subdomains']) > 10:
-            interesting.append(
-                f"Large number of subdomains found ({len(domain_categories['subdomains'])})")
-
-        # Check for multiple issuers
-        if len(unique_issuers) > 1:
-            interesting.append(
-                f"Multiple certificate issuers detected ({len(unique_issuers)})")
-
-        # Check for recently issued certificates
-        recent_certs = [cert for cert in processed_certs
-                        if datetime.datetime.fromisoformat(cert['not_before']) >
-                        (datetime.datetime.now() - datetime.timedelta(days=7))]
-        if recent_certs:
-            interesting.append(
-                f"Recently issued certificates found ({len(recent_certs)} in past week)")
-
-        # Note wildcard usage
-        if domain_categories['wildcards']:
-            interesting.append(
-                f"Wildcard certificates detected ({len(domain_categories['wildcards'])})")
-
-        analysis['interesting_patterns'] = interesting
-
+    if not sources_used:
         return {
-            'certificates': processed_certs,
-            'domains': {
-                'all': sorted(list(unique_domains)),
-                'apex': sorted(list(domain_categories['apex_domains'])),
-                'subdomains': sorted(list(domain_categories['subdomains'])),
-                'wildcards': sorted(list(domain_categories['wildcards']))
-            },
-            'issuers': sorted(list(unique_issuers)),
-            'analysis': analysis,
+            'error': 'All certificate sources failed',
+            'source_errors': errors,
             'query_info': {
                 'domain': domain,
                 'include_expired': include_expired,
                 'wildcard_search': wildcard,
-                'timestamp': datetime.datetime.now().isoformat()
+                'timestamp': now.isoformat(),
             }
         }
 
-    except requests.exceptions.RequestException as e:
-        return {
-            "error": f"Failed to fetch certificate data: {str(e)}",
-            "query_info": {
-                'domain': domain,
-                'timestamp': datetime.datetime.now().isoformat()
-            }
+    processed_certs: List[Dict] = []
+    unique_domains: set = set()
+    unique_issuers: set = set()
+    seen_fingerprints: set = set()
+
+    # Normalize CertSpotter records
+    for cert in raw_certspotter:
+        dns_names = cert.get('dns_names', [])
+        domains = {d.lower() for d in dns_names if d}
+        issuer_obj = cert.get('issuer') or {}
+        issuer_name = issuer_obj.get('name', 'Unknown') if isinstance(issuer_obj, dict) else str(issuer_obj)
+
+        try:
+            not_before = _parse_cert_date(cert['not_before'])
+            not_after = _parse_cert_date(cert['not_after'])
+        except (ValueError, KeyError):
+            continue
+
+        is_valid = not_after > now
+        fingerprint = cert.get('tbs_sha256') or cert.get('cert_sha256') or str(cert.get('id', ''))
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+
+        if is_valid or include_expired:
+            processed_certs.append({
+                'id': str(cert.get('id', '')),
+                'fingerprint': fingerprint,
+                'issuer': issuer_name,
+                'domains': sorted(domains),
+                'not_before': not_before.isoformat(),
+                'not_after': not_after.isoformat(),
+                'is_valid': is_valid,
+                'source': 'certspotter',
+            })
+            unique_domains.update(domains)
+            unique_issuers.add(issuer_name)
+
+    # Normalize Censys records
+    for hit in raw_censys:
+        parsed = hit.get('parsed', {})
+        names = parsed.get('names', [])
+        domains = {d.lower() for d in names if d}
+        issuer_dn = parsed.get('issuer_dn', 'Unknown')
+
+        validity = parsed.get('validity', {})
+        start_str = validity.get('start', '')
+        end_str = validity.get('end', '')
+        if not start_str or not end_str:
+            continue
+
+        try:
+            not_before = _parse_cert_date(start_str)
+            not_after = _parse_cert_date(end_str)
+        except ValueError:
+            continue
+
+        is_valid = not_after > now
+        fingerprint = parsed.get('fingerprint_sha256') or hit.get('fingerprint_sha256', '')
+        if fingerprint in seen_fingerprints:
+            continue
+        if fingerprint:
+            seen_fingerprints.add(fingerprint)
+
+        if is_valid or include_expired:
+            processed_certs.append({
+                'id': fingerprint,
+                'fingerprint': fingerprint,
+                'issuer': issuer_dn,
+                'domains': sorted(domains),
+                'not_before': not_before.isoformat(),
+                'not_after': not_after.isoformat(),
+                'is_valid': is_valid,
+                'source': 'censys',
+            })
+            unique_domains.update(domains)
+            unique_issuers.add(issuer_dn)
+
+    # Categorize domains
+    base_domain = domain.lower()
+    domain_categories: Dict[str, set] = {
+        'apex_domains': set(),
+        'subdomains': set(),
+        'wildcards': set(),
+    }
+    for d in unique_domains:
+        if '*' in d:
+            domain_categories['wildcards'].add(d)
+        elif d == base_domain:
+            domain_categories['apex_domains'].add(d)
+        else:
+            domain_categories['subdomains'].add(d)
+
+    # Detect interesting patterns
+    interesting: List[str] = []
+    if len(domain_categories['subdomains']) > 10:
+        interesting.append(f"Large number of subdomains found ({len(domain_categories['subdomains'])})")
+    if len(unique_issuers) > 1:
+        interesting.append(f"Multiple certificate issuers detected ({len(unique_issuers)})")
+
+    recent_certs = [
+        c for c in processed_certs
+        if _parse_cert_date(c['not_before']) > (now - datetime.timedelta(days=7))
+    ]
+    if recent_certs:
+        interesting.append(f"Recently issued certificates found ({len(recent_certs)} in past week)")
+    if domain_categories['wildcards']:
+        interesting.append(f"Wildcard certificates detected ({len(domain_categories['wildcards'])})")
+
+    valid_count = sum(1 for c in processed_certs if c['is_valid'])
+
+    return {
+        'certificates': processed_certs,
+        'domains': {
+            'all': sorted(unique_domains),
+            'apex': sorted(domain_categories['apex_domains']),
+            'subdomains': sorted(domain_categories['subdomains']),
+            'wildcards': sorted(domain_categories['wildcards']),
+        },
+        'issuers': sorted(unique_issuers),
+        'analysis': {
+            'total_certificates': len(processed_certs),
+            'valid_certificates': valid_count,
+            'unique_domains': {
+                'total': len(unique_domains),
+                'apex_domains': len(domain_categories['apex_domains']),
+                'subdomains': len(domain_categories['subdomains']),
+                'wildcards': len(domain_categories['wildcards']),
+            },
+            'unique_issuers_count': len(unique_issuers),
+            'interesting_patterns': interesting,
+        },
+        'query_info': {
+            'domain': domain,
+            'include_expired': include_expired,
+            'wildcard_search': wildcard,
+            'sources_used': sources_used,
+            'source_errors': errors,
+            'timestamp': now.isoformat(),
         }
-    except Exception as e:
+    }
+
+
+def get_security_txt(domain: str) -> Dict:
+    """
+    Fetch and parse security.txt for a domain (RFC 9116).
+
+    Tries /.well-known/security.txt first (canonical per RFC 9116), then
+    /security.txt as a legacy fallback. Attempts HTTPS before HTTP.
+
+    Args:
+        domain: Domain to check (e.g. example.com)
+
+    Returns:
+        Dict with found status, parsed RFC 9116 fields, expiry check, and raw content
+    """
+    _MULTI_VALUE = {'contact', 'acknowledgments', 'encryption', 'hiring', 'policy', 'canonical'}
+    candidates = [
+        f'https://{domain}/.well-known/security.txt',
+        f'https://{domain}/security.txt',
+        f'http://{domain}/.well-known/security.txt',
+        f'http://{domain}/security.txt',
+    ]
+
+    content = None
+    fetched_url = None
+    last_error = None
+
+    for url in candidates:
+        try:
+            resp = requests.get(
+                url,
+                timeout=10,
+                allow_redirects=True,
+                headers={'User-Agent': 'CyberSleuth/1.0'},
+            )
+            if resp.status_code == 200 and resp.text.strip():
+                content = resp.text
+                fetched_url = url
+                break
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            continue
+
+    if not content:
         return {
-            "error": f"Error processing certificate data: {str(e)}",
-            "query_info": {
-                'domain': domain,
-                'timestamp': datetime.datetime.now().isoformat()
-            }
+            'found': False,
+            'domain': domain,
+            'error': last_error or 'security.txt not found at standard locations',
+            'urls_tried': candidates,
         }
+
+    # Parse RFC 9116 fields
+    fields: Dict = {}
+    comments: List[str] = []
+
+    for line in content.splitlines():
+        stripped = line.rstrip()
+        if not stripped:
+            continue
+        if stripped.startswith('#'):
+            comment = stripped[1:].strip()
+            if comment:
+                comments.append(comment)
+            continue
+        if ':' not in stripped:
+            continue
+        key, _, value = stripped.partition(':')
+        key = key.strip().lower()
+        value = value.strip()
+        if not key or not value:
+            continue
+        if key in _MULTI_VALUE:
+            fields.setdefault(key, []).append(value)
+        else:
+            fields[key] = value
+
+    # Check whether the file itself has expired (Expires field is required by RFC 9116)
+    is_expired = None
+    expires_raw = fields.get('expires', '')
+    if expires_raw:
+        try:
+            expires_dt = _parse_cert_date(expires_raw)
+            is_expired = expires_dt < datetime.datetime.now(_UTC)
+        except ValueError:
+            pass
+
+    return {
+        'found': True,
+        'domain': domain,
+        'url': fetched_url,
+        'fields': fields,
+        'is_expired': is_expired,
+        'comments': comments,
+        'raw': content,
+    }
 
 
 # RIR whois servers for IP lookups (approximate first-octet mapping for IPv4).
