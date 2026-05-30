@@ -69,7 +69,7 @@ Use these specific sources per investigation phase:
 ## Phase 4: Domain & Digital Assets
 
 **Domain enumeration (7 techniques):**
-1. Certificate Transparency logs (crt.sh)
+1. Certificate Transparency logs (CertSpotter + Censys)
 2. DNS enumeration (subfinder, amass)
 3. Search engine discovery
 4. Social media bio links

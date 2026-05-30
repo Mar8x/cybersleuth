@@ -32,7 +32,7 @@ Use these specific sources per investigation phase:
 
 | Investigation Area | Sources |
 |-------------------|---------|
-| **Domain/DNS** | SecurityTrails, DomainTools, crt.sh, DNSDumpster, ViewDNS, Robtex, CertStream |
+| **Domain/DNS** | SecurityTrails, DomainTools, CertSpotter, Censys, DNSDumpster, ViewDNS, Robtex, CertStream |
 | **IP Reputation** | Shodan, Censys, AbuseIPDB, GreyNoise, BinaryEdge, ZoomEye, Criminal IP, IPinfo |
 | **Malware Analysis** | VirusTotal, Hybrid Analysis, ANY.RUN, MalwareBazaar, URLhaus, URLScan.io |
 | **Vulnerability** | NVD, CVE, Exploit-DB, CISA KEV |
@@ -49,7 +49,7 @@ Use these specific sources per investigation phase:
 **Domain Analysis:**
 - WHOIS lookup (registrant, dates, name servers)
 - DNS records (A, AAAA, MX, NS, TXT, CNAME)
-- Subdomain enumeration (crt.sh, subfinder, amass)
+- Subdomain enumeration (CertSpotter, Censys, subfinder, amass)
 - Historical DNS (SecurityTrails, Wayback)
 
 **URL Analysis:**
