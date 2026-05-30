@@ -115,6 +115,7 @@ If any layer is **not** shared, document and reason why — this is intelligence
 - Identify technology stacks and security configurations
 - **Footers and login sites**: Capture information from site footers (copyright, "Powered by", framework or CMS hints, links to career pages, legal/impressum, subsidiary names, social links, portal URLs) and from login or auth pages (SSO or IdP hints, "Sign in with" options, internal app names or URLs, password-reset flows that reveal mail domains or tenant IDs); use URLScan and optional manual inspection to capture login and footer content
 - Enrich technology stack visibility using BuiltWith (free API) for technology groups and categories by domain
+- **Tech-stack intelligence from job postings and GitHub**: Use `career_sources` to discover which ATS platform a company uses (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio, and others — ATS choice is itself a regional/stage signal); `job_postings` to extract required and desired technology keywords from job descriptions; `github_recon` to read actual dependency manifests and CI/CD workflow files from public repos; `tech_stack` to run the full pipeline. Corroborate job-posting claims with CT log subdomains and DNS records (e.g. `kafka.*` subdomain confirms Kafka; `auth0.*` confirms Auth0). Methodology: `cybersleuth://tech-stack-recon`.
 
 ### Threat Intelligence
 - Search and correlate data across multiple sources (Shodan, CertSpotter, Censys, URLScan, WHOIS, DNS, VirusTotal)

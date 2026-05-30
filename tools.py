@@ -1381,6 +1381,864 @@ def get_vt_ip_report(ip: str, api_key: str) -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# Tech-stack intelligence: job postings, GitHub org recon, synthesis
+#
+# Methodology in docs/tech-stack-recon.md.
+# ---------------------------------------------------------------------------
+
+import base64
+import json as _json
+
+_CAREERS_PATHS = [
+    '/careers', '/jobs', '/career', '/join-us', '/join', '/work-with-us',
+    '/open-positions', '/openings', '/opportunities', '/vacancies',
+    '/hiring', '/about/careers', '/company/careers', '/team',
+]
+
+# ATS providers: url patterns (group 1 = handle), optional JSON API template,
+# list fields, and which regions they are prevalent in.
+_ATS_PROVIDERS: Dict[str, Dict] = {
+    'greenhouse': {
+        'patterns': [r'boards\.greenhouse\.io/([A-Za-z0-9_-]+)',
+                     r'board\.greenhouse\.io/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://boards.greenhouse.io/{handle}',
+        'api': 'https://boards-api.greenhouse.io/v1/boards/{handle}/jobs?content=true',
+        'list_key': 'jobs',
+        'fields': {'title': 'title', 'location': ('location', 'name'),
+                   'posted': 'updated_at', 'description': 'content'},
+        'regions': ['us', 'global'],
+    },
+    'lever': {
+        'patterns': [r'jobs\.lever\.co/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://jobs.lever.co/{handle}',
+        'api': 'https://api.lever.co/v0/postings/{handle}?mode=json',
+        'list_key': None,
+        'fields': {'title': 'text', 'location': ('categories', 'location'),
+                   'posted': 'createdAt', 'description': 'descriptionPlain'},
+        'regions': ['us', 'global'],
+    },
+    'ashby': {
+        'patterns': [r'jobs\.ashbyhq\.com/([A-Za-z0-9_-]+)',
+                     r'app\.ashbyhq\.com/jobs/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://jobs.ashbyhq.com/{handle}',
+        'api': 'https://api.ashbyhq.com/posting-api/job-board/{handle}',
+        'list_key': 'jobPostings',
+        'fields': {'title': 'title', 'location': 'locationName',
+                   'posted': 'publishedDate', 'description': 'descriptionHtml'},
+        'regions': ['us', 'global'],
+    },
+    'workable': {
+        'patterns': [r'apply\.workable\.com/([A-Za-z0-9_-]+)',
+                     r'(?<!\.)([a-z0-9-]+)\.workable\.com(?!/api)'],
+        'board_url_template': 'https://apply.workable.com/{handle}',
+        'api': 'https://apply.workable.com/api/v3/accounts/{handle}/jobs',
+        'list_key': 'results',
+        'fields': {'title': 'title', 'location': 'city', 'posted': 'published_on'},
+        'regions': ['eu', 'global'],
+    },
+    'recruitee': {
+        'patterns': [r'([a-z0-9-]+)\.recruitee\.com'],
+        'board_url_template': 'https://{handle}.recruitee.com',
+        'api': 'https://{handle}.recruitee.com/api/offers/',
+        'list_key': 'offers',
+        'fields': {'title': 'title', 'location': 'city',
+                   'posted': 'created_at', 'description': 'description'},
+        'regions': ['eu', 'global'],
+    },
+    'smartrecruiters': {
+        'patterns': [r'careers\.smartrecruiters\.com/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://careers.smartrecruiters.com/{handle}',
+        'api': 'https://api.smartrecruiters.com/v1/companies/{handle}/postings',
+        'list_key': 'content',
+        'fields': {'title': 'name', 'location': ('location', 'city')},
+        'regions': ['global'],
+    },
+    'personio': {
+        'patterns': [r'([a-z0-9-]+)\.jobs\.personio\.(?:de|com)',
+                     r'([a-z0-9-]+)\.personio\.de/job-listings'],
+        'board_url_template': 'https://{handle}.jobs.personio.de',
+        'api': 'https://{handle}.jobs.personio.de/api/v1/jobs',
+        'list_key': None,
+        'fields': {'title': 'name', 'posted': 'created_at', 'description': 'description'},
+        'regions': ['eu', 'dach'],
+    },
+    'bamboohr': {
+        'patterns': [r'([a-z0-9-]+)\.bamboohr\.com/careers'],
+        'board_url_template': 'https://{handle}.bamboohr.com/careers',
+        'api': 'https://{handle}.bamboohr.com/careers/list',
+        'list_key': 'result',
+        'fields': {'title': 'jobOpeningName', 'location': 'location',
+                   'posted': 'datePosted'},
+        'regions': ['us'],
+    },
+    'teamtailor': {
+        'patterns': [r'([a-z0-9-]+)\.teamtailor\.com',
+                     r'jobs\.teamtailor\.com/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://{handle}.teamtailor.com',
+        'api': None,
+        'regions': ['nordic', 'eu'],
+    },
+    'workday': {
+        'patterns': [r'([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com'],
+        'board_url_template': 'https://{handle}.myworkdayjobs.com',
+        'api': None,
+        'regions': ['enterprise', 'global'],
+    },
+    'icims': {
+        'patterns': [r'([a-z0-9-]+)-careers\.icims\.com',
+                     r'careers-([a-z0-9-]+)\.icims\.com'],
+        'board_url_template': 'https://{handle}-careers.icims.com',
+        'api': None,
+        'regions': ['us', 'enterprise'],
+    },
+    'taleo': {
+        'patterns': [r'([a-z0-9-]+)\.taleo\.net'],
+        'board_url_template': 'https://{handle}.taleo.net',
+        'api': None,
+        'regions': ['enterprise'],
+    },
+}
+
+_TECH_KEYWORDS: Dict[str, List[str]] = {
+    'languages': [
+        'python', 'javascript', 'typescript', 'java', 'golang', 'rust', 'c++', 'c#',
+        '.net', 'ruby', 'php', 'swift', 'kotlin', 'scala', 'elixir', 'erlang',
+        'clojure', 'haskell', 'dart', 'perl', 'lua', 'groovy', 'cobol',
+    ],
+    'frontend': [
+        'react', 'vue.js', 'angular', 'svelte', 'next.js', 'nuxt', 'remix',
+        'astro', 'gatsby', 'tailwindcss', 'webpack', 'vite', 'storybook',
+    ],
+    'backend': [
+        'node.js', 'express', 'django', 'flask', 'fastapi', 'spring boot',
+        'ruby on rails', 'laravel', 'gin framework', 'actix', 'phoenix framework',
+        'nestjs', 'grpc',
+    ],
+    'databases': [
+        'postgresql', 'mysql', 'mongodb', 'redis', 'elasticsearch', 'clickhouse',
+        'cassandra', 'dynamodb', 'cockroachdb', 'neo4j', 'pinecone', 'weaviate',
+        'qdrant', 'milvus', 'snowflake', 'bigquery', 'redshift', 'duckdb',
+    ],
+    'cloud': [
+        'amazon web services', 'aws', 'microsoft azure', 'google cloud', 'gcp',
+        'cloudflare', 'vercel', 'netlify', 'digitalocean', 'hetzner',
+        'ovhcloud', 'scaleway', 'exoscale', 'upcloud',
+    ],
+    'devops': [
+        'kubernetes', 'docker', 'terraform', 'ansible', 'helm', 'argocd',
+        'jenkins', 'github actions', 'gitlab ci', 'circleci', 'teamcity',
+        'pulumi', 'consul', 'nginx', 'traefik', 'istio',
+    ],
+    'observability': [
+        'datadog', 'grafana', 'prometheus', 'sentry', 'new relic', 'splunk',
+        'opentelemetry', 'honeycomb', 'dynatrace', 'pagerduty', 'cloudwatch',
+        'jaeger', 'zipkin',
+    ],
+    'data_platform': [
+        'apache spark', 'apache kafka', 'apache airflow', 'dbt', 'databricks',
+        'fivetran', 'airbyte', 'apache flink', 'dagster', 'prefect',
+        'apache iceberg', 'delta lake', 'apache hudi', 'trino', 'dask', 'polars',
+    ],
+    'security_tools': [
+        'hashicorp vault', 'okta', 'auth0', 'keycloak', 'sonarqube', 'snyk',
+        'trivy', 'falco', 'crowdstrike', 'wiz', 'lacework', 'aqua security',
+    ],
+    'llm_ai': [
+        'openai', 'anthropic', 'langchain', 'llamaindex', 'hugging face',
+        'pytorch', 'tensorflow', 'scikit-learn', 'mlflow', 'ray', 'kubeflow',
+        'sagemaker', 'vertex ai', 'bedrock', 'mistral', 'large language model',
+        'retrieval augmented generation', 'vector database', 'embeddings',
+    ],
+    'messaging': [
+        'rabbitmq', 'amazon sqs', 'google pubsub', 'nats', 'celery',
+        'sidekiq', 'temporal', 'zeromq',
+    ],
+    'mobile': [
+        'react native', 'flutter', 'swiftui', 'jetpack compose', 'expo',
+        'capacitor', 'ionic',
+    ],
+}
+
+_DEP_FILES = [
+    'package.json', 'requirements.txt', 'pyproject.toml', 'go.mod',
+    'Cargo.toml', 'Gemfile', 'pom.xml', 'composer.json',
+    'build.gradle', 'build.gradle.kts',
+]
+
+_WAYBACK_TIMEOUT = 10
+_GITHUB_TIMEOUT = 15
+_CAREERS_FETCH_TIMEOUT = 12
+
+
+def _extract_tech_keywords(text: str) -> Dict[str, List[str]]:
+    """Return categorized tech keywords found in text."""
+    text_lower = text.lower()
+    found: Dict[str, List[str]] = {}
+    for category, keywords in _TECH_KEYWORDS.items():
+        hits = []
+        for kw in keywords:
+            # Use word boundaries where the keyword starts/ends with word chars.
+            escaped = re.escape(kw)
+            prefix = r'\b' if re.match(r'\w', kw) else ''
+            suffix = r'\b' if re.match(r'\w', kw[-1]) else ''
+            if re.search(prefix + escaped + suffix, text_lower):
+                hits.append(kw)
+        if hits:
+            found[category] = sorted(set(hits))
+    return found
+
+
+def _get_nested(obj: Dict, *keys) -> str:
+    """Safely traverse nested dict keys, return '' if missing."""
+    cur = obj
+    for k in keys:
+        if not isinstance(cur, dict):
+            return ''
+        cur = cur.get(k, '')
+    return cur or ''
+
+
+def _normalise_job(raw: Dict, fields: Dict) -> Dict:
+    """Map a raw ATS job record to a common schema using the fields spec."""
+    title_key = fields.get('title', 'title')
+    title = raw.get(title_key, '') if isinstance(title_key, str) else _get_nested(raw, *title_key)
+
+    loc_spec = fields.get('location', 'location')
+    if isinstance(loc_spec, tuple):
+        location = _get_nested(raw, *loc_spec)
+    else:
+        location = raw.get(loc_spec, '') or ''
+
+    posted_key = fields.get('posted', '')
+    posted = raw.get(posted_key, '') if posted_key else ''
+
+    desc_key = fields.get('description', '')
+    desc_raw = raw.get(desc_key, '') if desc_key else ''
+    # Strip HTML tags for keyword extraction
+    desc_text = re.sub(r'<[^>]+>', ' ', str(desc_raw or ''))
+
+    return {
+        'title': str(title or ''),
+        'location': str(location or ''),
+        'posted': str(posted or ''),
+        'tech_keywords': _extract_tech_keywords(f"{title} {desc_text}"),
+        'description_snippet': desc_text[:300].strip() if desc_text else '',
+    }
+
+
+_ATS_PLATFORM_SUBDOMAINS = frozenset({
+    'apply', 'jobs', 'careers', 'www', 'api', 'boards', 'board',
+    'app', 'hire', 'talent', 'recruit', 'work',
+})
+
+
+def _detect_ats_in_text(text: str) -> List[Dict]:
+    """Find ATS handles embedded in page HTML or redirected URLs."""
+    matches = []
+    for ats_name, spec in _ATS_PROVIDERS.items():
+        for pattern in spec['patterns']:
+            for m in re.finditer(pattern, text, flags=re.IGNORECASE):
+                handle = (m.group(1) if m.lastindex else '').rstrip('/')
+                if not handle or handle.lower() in _ATS_PLATFORM_SUBDOMAINS:
+                    continue
+                tpl = spec.get('board_url_template', '')
+                board_url = tpl.replace('{handle}', handle) if tpl else m.group(0)
+                matches.append({
+                    'ats': ats_name,
+                    'handle': handle,
+                    'board_url': board_url,
+                    'matched_url': m.group(0),
+                    'has_api': spec.get('api') is not None,
+                    'regions': spec.get('regions', []),
+                })
+    # Deduplicate by (ats, handle)
+    seen: set = set()
+    unique = []
+    for m in matches:
+        key = (m['ats'], m['handle'])
+        if key not in seen:
+            seen.add(key)
+            unique.append(m)
+    return unique
+
+
+def _wayback_careers(domain: str) -> List[Dict]:
+    """Return Wayback Machine CDX snapshots of careers pages for this domain."""
+    results = []
+    for path in ('/careers', '/jobs', '/about/careers'):
+        try:
+            resp = requests.get(
+                'https://web.archive.org/cdx/search/cdx',
+                params={
+                    'url': f'{domain}{path}*',
+                    'output': 'json',
+                    'fl': 'timestamp,statuscode,original',
+                    'filter': 'statuscode:200',
+                    'collapse': 'urlkey',
+                    'limit': 3,
+                },
+                timeout=_WAYBACK_TIMEOUT,
+            )
+            if resp.status_code == 200 and resp.text.strip():
+                rows = resp.json()
+                for row in rows[1:]:  # skip header row
+                    results.append({
+                        'timestamp': row[0],
+                        'original_url': row[2],
+                        'archive_url': f'https://web.archive.org/web/{row[0]}/{row[2]}',
+                    })
+        except (requests.exceptions.RequestException, ValueError):
+            continue
+    return results
+
+
+def find_career_sources(domain: str) -> Dict:
+    """
+    Discover ATS platforms and career pages used by a company.
+
+    Crawls common careers paths on the domain, detects ATS providers by URL
+    patterns in redirects and page HTML, then falls back to Wayback Machine
+    CDX if nothing is found on the live web. ATS coverage includes Greenhouse,
+    Lever, Ashby, Workable, Recruitee, SmartRecruiters, Personio, BambooHR,
+    Teamtailor, Workday, iCIMS, and Taleo.
+
+    The ATS choice itself is a regional/company-stage signal — see
+    cybersleuth://tech-stack-recon for the regional distribution table.
+
+    Args:
+        domain: Company domain to check (e.g. example.com)
+
+    Returns:
+        Dict with discovered ATS handles, live careers URLs, Wayback fallback
+        results, and the ATS meta-signal (region/stage inference).
+    """
+    base = domain.rstrip('/')
+    if not base.startswith('http'):
+        base = f'https://{base}'
+
+    discovered_ats: List[Dict] = []
+    live_careers_urls: List[str] = []
+    errors: List[str] = []
+
+    headers = {'User-Agent': 'CyberSleuth/1.0'}
+
+    for path in _CAREERS_PATHS:
+        url = base + path
+        try:
+            resp = requests.get(
+                url, headers=headers,
+                timeout=_CAREERS_FETCH_TIMEOUT,
+                allow_redirects=True,
+            )
+            if resp.status_code == 200:
+                live_careers_urls.append(str(resp.url))
+                # Check redirected URL itself
+                hits = _detect_ats_in_text(str(resp.url))
+                # Check all links/iframes in the HTML body
+                hits += _detect_ats_in_text(resp.text)
+                for h in hits:
+                    h['found_at'] = path
+                discovered_ats.extend(hits)
+        except requests.exceptions.RequestException as e:
+            errors.append(f'{path}: {str(e)[:80]}')
+            continue
+
+    # Deduplicate across all paths
+    seen: set = set()
+    unique_ats: List[Dict] = []
+    for h in discovered_ats:
+        key = (h['ats'], h['handle'])
+        if key not in seen:
+            seen.add(key)
+            unique_ats.append(h)
+
+    wayback: List[Dict] = []
+    if not live_careers_urls:
+        wayback = _wayback_careers(domain.replace('https://', '').replace('http://', ''))
+
+    return {
+        'domain': domain,
+        'ats_discovered': unique_ats,
+        'live_careers_urls': list(dict.fromkeys(live_careers_urls)),
+        'wayback_snapshots': wayback,
+        'errors': errors,
+        'query_info': {'timestamp': datetime.datetime.now(_UTC).isoformat()},
+    }
+
+
+def fetch_job_postings(board_url: str, max_jobs: int = 50) -> Dict:
+    """
+    Fetch job postings from a discovered ATS board URL and extract tech keywords.
+
+    The board_url is taken from the ``board_url`` field returned by
+    find_career_sources(). The ATS platform and company handle are identified
+    automatically from the URL — callers do not need to name the platform.
+
+    Supported ATS platforms with public JSON APIs: greenhouse, lever, ashby,
+    workable, recruitee, smartrecruiters, personio, bamboohr.
+
+    The methodology for interpreting tech keywords is in
+    cybersleuth://tech-stack-recon.
+
+    Args:
+        board_url: ATS board URL from career_sources() (e.g.
+                   "https://boards.greenhouse.io/acmecorp").
+        max_jobs: Maximum number of job postings to return (default 50).
+
+    Returns:
+        Dict with job list, aggregated tech keywords across all postings,
+        and per-category frequency counts.
+    """
+    hits = _detect_ats_in_text(board_url)
+    if not hits:
+        return {
+            'error': (
+                f'Could not identify ATS platform from URL: {board_url!r}. '
+                'Pass the board_url value returned by career_sources().'
+            ),
+            'board_url': board_url,
+        }
+
+    match = hits[0]
+    ats_type = match['ats']
+    handle = match['handle']
+    spec = _ATS_PROVIDERS[ats_type]
+
+    if spec.get('api') is None:
+        return {
+            'error': (
+                f'{ats_type} does not expose a public JSON API. '
+                'Fetch and read the careers page manually or use the Wayback Machine.'
+            ),
+            'ats': ats_type,
+            'handle': handle,
+            'board_url': board_url,
+        }
+
+    api_url = spec['api'].replace('{handle}', handle)
+    try:
+        resp = requests.get(
+            api_url,
+            headers={'User-Agent': 'CyberSleuth/1.0'},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        return {'error': f'Request failed: {str(e)}', 'ats': ats_type, 'handle': handle,
+                'board_url': board_url}
+    except ValueError as e:
+        return {'error': f'JSON parse error: {str(e)}', 'ats': ats_type, 'handle': handle,
+                'board_url': board_url}
+
+    list_key = spec.get('list_key')
+    raw_jobs = data.get(list_key, data) if list_key else data
+    if not isinstance(raw_jobs, list):
+        raw_jobs = []
+
+    raw_jobs = raw_jobs[:max_jobs]
+    fields = spec.get('fields', {})
+    jobs = [_normalise_job(j, fields) for j in raw_jobs]
+
+    # Aggregate keywords across all postings
+    agg: Dict[str, Dict[str, int]] = {}
+    for job in jobs:
+        for cat, kws in job.get('tech_keywords', {}).items():
+            for kw in kws:
+                agg.setdefault(cat, {})[kw] = agg.get(cat, {}).get(kw, 0) + 1
+
+    # Sort each category by frequency
+    aggregated = {cat: sorted(counts.items(), key=lambda x: -x[1]) for cat, counts in agg.items()}
+
+    return {
+        'ats': ats_type,
+        'handle': handle,
+        'board_url': board_url,
+        'api_url': api_url,
+        'total_jobs': len(raw_jobs),
+        'jobs': jobs,
+        'aggregated_tech_keywords': aggregated,
+        'query_info': {'timestamp': datetime.datetime.now(_UTC).isoformat()},
+    }
+
+
+def _github_headers() -> Dict:
+    token = os.environ.get('GITHUB_TOKEN')
+    h = {
+        'User-Agent': 'CyberSleuth/1.0',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    if token:
+        h['Authorization'] = f'Bearer {token}'
+    return h
+
+
+def _gh_get(url: str, params: Optional[Dict] = None) -> Optional[Dict]:
+    """GET a GitHub API URL. Returns parsed JSON or None on error."""
+    try:
+        resp = requests.get(url, headers=_github_headers(), params=params,
+                            timeout=_GITHUB_TIMEOUT)
+        if resp.status_code == 200:
+            return resp.json()
+    except requests.exceptions.RequestException:
+        pass
+    return None
+
+
+def _parse_dep_file(filename: str, content: str) -> List[str]:
+    """Return top-level dependency names from a manifest file's text content."""
+    name = filename.lower().rsplit('/', 1)[-1]
+    deps: List[str] = []
+
+    if name == 'package.json':
+        try:
+            data = _json.loads(content)
+            for section in ('dependencies', 'devDependencies', 'peerDependencies'):
+                deps.extend(data.get(section, {}).keys())
+        except (ValueError, AttributeError):
+            pass
+
+    elif name == 'requirements.txt':
+        for line in content.splitlines():
+            line = line.strip()
+            if line and not line.startswith(('#', '-', '.')):
+                pkg = re.split(r'[><=!;\[\s@]', line)[0].strip()
+                if pkg:
+                    deps.append(pkg)
+
+    elif name == 'pyproject.toml':
+        # Match quoted strings that look like package specifiers
+        for m in re.finditer(r'["\']([\w][\w.-]+)\s*[><=!]', content):
+            pkg = m.group(1).strip()
+            if pkg and pkg not in ('python',):
+                deps.append(pkg)
+        # Also match bare names in dependencies array
+        for m in re.finditer(r'^\s*"([\w][\w.-]+)"', content, re.MULTILINE):
+            deps.append(m.group(1))
+
+    elif name == 'go.mod':
+        in_req = False
+        for line in content.splitlines():
+            s = line.strip()
+            if s.startswith('require ('):
+                in_req = True
+            elif s == ')':
+                in_req = False
+            elif s.startswith('require ') and not s.endswith('('):
+                parts = s.split()
+                if len(parts) >= 2:
+                    deps.append(parts[1])
+            elif in_req and s and not s.startswith('//'):
+                deps.append(s.split()[0])
+
+    elif name == 'cargo.toml':
+        in_deps = False
+        for line in content.splitlines():
+            s = line.strip()
+            if re.match(r'^\[(?:dev-)?dependencies\]', s, re.IGNORECASE):
+                in_deps = True
+            elif s.startswith('['):
+                in_deps = False
+            elif in_deps and '=' in s and not s.startswith('#'):
+                deps.append(s.split('=')[0].strip())
+
+    elif name == 'gemfile':
+        for m in re.finditer(r"gem\s+['\"]([^'\"]+)['\"]", content):
+            deps.append(m.group(1))
+
+    elif name in ('build.gradle', 'build.gradle.kts'):
+        for m in re.finditer(r"['\"]([a-zA-Z0-9._-]+:[a-zA-Z0-9._-]+):[^'\"]+['\"]", content):
+            deps.append(m.group(1))
+
+    elif name == 'composer.json':
+        try:
+            data = _json.loads(content)
+            for section in ('require', 'require-dev'):
+                deps.extend(k for k in data.get(section, {}) if not k.startswith('php'))
+        except (ValueError, AttributeError):
+            pass
+
+    return sorted({d for d in deps if d and len(d) > 1})
+
+
+def github_org_recon(org: str, max_repos: int = 20) -> Dict:
+    """
+    Enumerate a GitHub organisation's public repos for tech-stack intelligence.
+
+    Fetches the org metadata, top repos by stars (up to max_repos), language
+    breakdown, top-level dependency manifests (package.json, requirements.txt,
+    pyproject.toml, go.mod, Cargo.toml, Gemfile, pom.xml, composer.json),
+    and CI/CD workflow files (.github/workflows/*.yml).
+
+    No authentication required for public orgs; set GITHUB_TOKEN for the
+    standard 5000 req/h instead of 60 req/h unauthenticated.
+
+    Args:
+        org: GitHub organisation or user slug (e.g. "anthropics")
+        max_repos: Maximum number of repos to inspect for deps/workflows
+
+    Returns:
+        Dict with org metadata, repo list, language stats, dependency
+        keywords, CI tooling signals, and aggregated tech keywords.
+    """
+    # Org metadata
+    org_data = _gh_get(f'https://api.github.com/orgs/{org}')
+    if org_data is None:
+        # Try user endpoint as fallback
+        org_data = _gh_get(f'https://api.github.com/users/{org}') or {}
+
+    # Repos — sorted by stars descending
+    repos_raw = _gh_get(
+        f'https://api.github.com/orgs/{org}/repos',
+        params={'type': 'public', 'per_page': 100, 'sort': 'updated'},
+    )
+    if repos_raw is None:
+        repos_raw = _gh_get(
+            f'https://api.github.com/users/{org}/repos',
+            params={'type': 'public', 'per_page': 100, 'sort': 'updated'},
+        ) or []
+
+    repos_sorted = sorted(repos_raw, key=lambda r: r.get('stargazers_count', 0), reverse=True)
+    top_repos = repos_sorted[:max_repos]
+
+    repo_summaries: List[Dict] = []
+    lang_totals: Dict[str, int] = {}
+    all_dep_keywords: Dict[str, Dict[str, int]] = {}
+    ci_signals: Dict[str, int] = {}
+
+    for repo in top_repos:
+        name = repo.get('name', '')
+        default_branch = repo.get('default_branch', 'main')
+        stars = repo.get('stargazers_count', 0)
+        archived = repo.get('archived', False)
+
+        summary: Dict = {
+            'name': name,
+            'description': repo.get('description', ''),
+            'stars': stars,
+            'language': repo.get('language', ''),
+            'archived': archived,
+            'topics': repo.get('topics', []),
+        }
+
+        # Language stats
+        langs = _gh_get(f'https://api.github.com/repos/{org}/{name}/languages') or {}
+        for lang, bytes_count in langs.items():
+            lang_totals[lang] = lang_totals.get(lang, 0) + bytes_count
+
+        # Dependency files
+        dep_keywords_this_repo: List[str] = []
+        for dep_file in _DEP_FILES:
+            file_data = _gh_get(
+                f'https://api.github.com/repos/{org}/{name}/contents/{dep_file}',
+                params={'ref': default_branch},
+            )
+            if file_data and file_data.get('encoding') == 'base64':
+                try:
+                    content = base64.b64decode(file_data['content']).decode('utf-8', errors='ignore')
+                    deps = _parse_dep_file(dep_file, content)
+                    dep_text = ' '.join(deps)
+                    kw = _extract_tech_keywords(dep_text)
+                    for cat, items in kw.items():
+                        for item in items:
+                            all_dep_keywords.setdefault(cat, {})[item] = \
+                                all_dep_keywords.get(cat, {}).get(item, 0) + 1
+                    dep_keywords_this_repo.extend(
+                        item for items in kw.values() for item in items
+                    )
+                    summary.setdefault('dep_files_found', []).append(dep_file)
+                except Exception:
+                    pass
+
+        # CI workflows
+        workflows_dir = _gh_get(
+            f'https://api.github.com/repos/{org}/{name}/contents/.github/workflows',
+            params={'ref': default_branch},
+        )
+        if isinstance(workflows_dir, list):
+            summary['ci_workflows'] = [f.get('name', '') for f in workflows_dir]
+            for wf_file in workflows_dir[:5]:  # cap per-repo workflow reads
+                wf_data = _gh_get(wf_file.get('url', ''))
+                if wf_data and wf_data.get('encoding') == 'base64':
+                    try:
+                        wf_text = base64.b64decode(wf_data['content']).decode('utf-8', errors='ignore')
+                        # CI tool detection
+                        ci_tool_patterns = {
+                            'docker': r'docker\b',
+                            'kubernetes': r'kubectl|helm\b|kustomize',
+                            'terraform': r'terraform|opentofu',
+                            'pulumi': r'pulumi',
+                            'aws': r'aws-actions/|ecr\.amazonaws|\.amazonaws\.com',
+                            'gcp': r'google-github-actions/|gcr\.io|artifact.*registry',
+                            'azure': r'azure/|azurecr\.io',
+                            'snyk': r'snyk',
+                            'sonarcloud': r'sonarqube|sonarcloud',
+                            'trivy': r'trivy',
+                            'argocd': r'argocd|argo-cd',
+                        }
+                        for tool, pattern in ci_tool_patterns.items():
+                            if re.search(pattern, wf_text, re.IGNORECASE):
+                                ci_signals[tool] = ci_signals.get(tool, 0) + 1
+                    except Exception:
+                        pass
+
+        if dep_keywords_this_repo:
+            summary['dep_tech_keywords'] = sorted(set(dep_keywords_this_repo))
+        repo_summaries.append(summary)
+
+    # Aggregate language stats: sort by bytes
+    languages_sorted = sorted(lang_totals.items(), key=lambda x: -x[1])
+
+    # Aggregate dep keywords: sort each category by frequency
+    aggregated_dep_kw = {
+        cat: sorted(counts.items(), key=lambda x: -x[1])
+        for cat, counts in all_dep_keywords.items()
+    }
+
+    return {
+        'org': org,
+        'org_metadata': {
+            'name': org_data.get('name', ''),
+            'description': org_data.get('description', ''),
+            'location': org_data.get('location', ''),
+            'public_repos': org_data.get('public_repos', 0),
+            'followers': org_data.get('followers', 0),
+            'blog': org_data.get('blog', ''),
+            'created_at': org_data.get('created_at', ''),
+        },
+        'top_repos': repo_summaries,
+        'language_distribution': languages_sorted[:20],
+        'aggregated_dep_keywords': aggregated_dep_kw,
+        'ci_tooling_signals': dict(sorted(ci_signals.items(), key=lambda x: -x[1])),
+        'total_repos_inspected': len(top_repos),
+        'query_info': {
+            'org': org,
+            'max_repos': max_repos,
+            'github_token_used': bool(os.environ.get('GITHUB_TOKEN')),
+            'timestamp': datetime.datetime.now(_UTC).isoformat(),
+        },
+    }
+
+
+def tech_stack_profile(domain: str, github_org: Optional[str] = None) -> Dict:
+    """
+    Build a comprehensive tech-stack profile for a company domain.
+
+    Orchestrates three intelligence sources in sequence:
+      1. find_career_sources() — discovers ATS platform and careers URLs
+      2. fetch_job_postings() — fetches postings from each discovered ATS
+         with a public API, extracts tech keywords from descriptions
+      3. github_org_recon() — if github_org provided, inspects repos,
+         dependency files, and CI workflows
+
+    Results are merged into a unified keyword profile with per-source
+    attribution and frequency counts. Higher frequency = more sources
+    independently confirming the same technology.
+
+    Methodology: cybersleuth://tech-stack-recon
+
+    Args:
+        domain: Company domain (e.g. example.com)
+        github_org: GitHub organisation slug (optional, e.g. "acmecorp").
+                    If not provided, GitHub recon is skipped.
+
+    Returns:
+        Unified tech-stack profile with keywords by category, source
+        attribution, ATS metadata, and confidence notes.
+    """
+    profile: Dict = {
+        'domain': domain,
+        'github_org': github_org,
+        'sources_used': [],
+        'tech_keywords': {},       # category -> [{keyword, count, sources[]}]
+        'ats_found': [],
+        'github_summary': None,
+        'errors': [],
+        'query_info': {'timestamp': datetime.datetime.now(_UTC).isoformat()},
+    }
+
+    # Merged keyword accumulator: {category: {keyword: {count, sources: set}}}
+    kw_acc: Dict[str, Dict[str, Dict]] = {}
+
+    def _add_keywords(kw_dict: Dict[str, List[str]], source: str) -> None:
+        for cat, kws in kw_dict.items():
+            for kw in kws:
+                bucket = kw_acc.setdefault(cat, {}).setdefault(kw, {'count': 0, 'sources': set()})
+                bucket['count'] += 1
+                bucket['sources'].add(source)
+
+    def _add_agg(agg: Dict[str, List], source: str) -> None:
+        """Add aggregated (keyword, count) pairs."""
+        for cat, pairs in agg.items():
+            for kw, cnt in pairs:
+                bucket = kw_acc.setdefault(cat, {}).setdefault(kw, {'count': 0, 'sources': set()})
+                bucket['count'] += cnt
+                bucket['sources'].add(source)
+
+    # 1. Careers / ATS discovery
+    careers = find_career_sources(domain)
+    profile['ats_found'] = careers.get('ats_discovered', [])
+    if careers.get('errors'):
+        profile['errors'].extend(careers['errors'])
+
+    if profile['ats_found']:
+        profile['sources_used'].append('career_pages')
+
+    # 2. Job postings from each discovered ATS with a public API
+    for ats_entry in profile['ats_found']:
+        if not ats_entry.get('has_api'):
+            continue
+        ats_type = ats_entry['ats']
+        handle = ats_entry['handle']
+        board_url = ats_entry.get('board_url', '')
+        if not board_url:
+            continue
+        postings = fetch_job_postings(board_url, max_jobs=100)
+        if 'error' in postings:
+            profile['errors'].append(f'{ats_type}/{handle}: {postings["error"]}')
+            continue
+        source_label = f'jobs:{ats_type}/{handle}'
+        _add_agg(postings.get('aggregated_tech_keywords', {}), source_label)
+        if postings.get('total_jobs', 0) > 0:
+            profile['sources_used'].append(source_label)
+
+    # 3. GitHub org recon
+    if github_org:
+        gh = github_org_recon(github_org)
+        profile['github_summary'] = {
+            'org_metadata': gh.get('org_metadata', {}),
+            'language_distribution': gh.get('language_distribution', []),
+            'ci_tooling_signals': gh.get('ci_tooling_signals', {}),
+            'total_repos_inspected': gh.get('total_repos_inspected', 0),
+        }
+        _add_agg(gh.get('aggregated_dep_keywords', {}), f'github:{github_org}')
+        # Add language distribution as language signals
+        lang_cat = kw_acc.setdefault('languages', {})
+        for lang, _ in gh.get('language_distribution', []):
+            lang_lower = lang.lower()
+            # Map GitHub language names to our keyword list where they match
+            for kw in _TECH_KEYWORDS.get('languages', []):
+                if lang_lower == kw or lang_lower == kw.rstrip('+#').strip():
+                    bucket = lang_cat.setdefault(lang_lower, {'count': 0, 'sources': set()})
+                    bucket['count'] += 1
+                    bucket['sources'].add(f'github:{github_org}:languages')
+                    break
+        profile['sources_used'].append(f'github:{github_org}')
+
+    # 4. Serialise the accumulator into the final profile
+    for cat, kw_map in kw_acc.items():
+        profile['tech_keywords'][cat] = sorted(
+            [
+                {'keyword': kw, 'count': v['count'], 'sources': sorted(v['sources'])}
+                for kw, v in kw_map.items()
+            ],
+            key=lambda x: -x['count'],
+        )
+
+    return profile
+
+
 # LLM / AI surface reconnaissance
 #
 # Methodology, signal tables, and OWASP LLM Top 10:2025 mapping live in
@@ -2024,6 +2882,10 @@ __all__ = [
     'get_vt_domain_report',
     'get_vt_ip_report',
     'get_as_intelligence',
+    'find_career_sources',
+    'fetch_job_postings',
+    'github_org_recon',
+    'tech_stack_profile',
     'llm_fingerprint',
     'llm_probe_public_chat',
     'llm_security_probe',

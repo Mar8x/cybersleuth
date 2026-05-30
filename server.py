@@ -18,6 +18,10 @@ from tools import (
     get_vt_domain_report,
     get_vt_ip_report,
     get_as_intelligence,
+    find_career_sources,
+    fetch_job_postings,
+    github_org_recon,
+    tech_stack_profile,
     llm_fingerprint as _llm_fingerprint_impl,
     llm_probe_public_chat as _llm_probe_public_chat_impl,
     llm_security_probe as _llm_security_probe_impl,
@@ -39,6 +43,7 @@ _SKILL_FILE = Path(__file__).resolve().parent / "cybersleuth.md"
 _REPORTS_FILE = Path(__file__).resolve().parent / "reports.md"
 _PEOPLE_FILE = Path(__file__).resolve().parent / "people-osint.md"
 _COMPANY_DDR_FILE = Path(__file__).resolve().parent / "docs" / "company-ddr.md"
+_TECH_STACK_FILE = Path(__file__).resolve().parent / "docs" / "tech-stack-recon.md"
 _LLM_RECON_FILE = Path(__file__).resolve().parent / "docs" / "llm-recon.md"
 
 
@@ -60,6 +65,11 @@ def _get_people_content() -> str:
 def _get_company_ddr_content() -> str:
     """Return company DDR workflow from docs/company-ddr.md."""
     return _COMPANY_DDR_FILE.read_text(encoding="utf-8")
+
+
+def _get_tech_stack_content() -> str:
+    """Return tech-stack recon methodology from docs/tech-stack-recon.md."""
+    return _TECH_STACK_FILE.read_text(encoding="utf-8")
 
 
 def _get_llm_recon_content() -> str:
@@ -89,6 +99,12 @@ def people_osint_resource() -> str:
 def company_ddr_resource() -> str:
     """Company DDR workflow: 5-phase due diligence playbook (domain discovery, infra recon, 12-agent research fleet, claims verification, DDR PDF). PAI-portable — uses CyberSleuth MCP tools and Claude Code Agent calls."""
     return _get_company_ddr_content()
+
+
+@mcp.resource("cybersleuth://tech-stack-recon")
+def tech_stack_recon_resource() -> str:
+    """Tech-stack intelligence methodology: ATS discovery, job-posting keyword extraction, GitHub org recon, LinkedIn dorks, Wayback fallback, confidence calibration."""
+    return _get_tech_stack_content()
 
 
 @mcp.resource("cybersleuth://llm-recon")
@@ -301,6 +317,84 @@ def vt_ip_report(ip: str) -> dict:
     if not api_key:
         return {"error": "VIRUSTOTAL_API_KEY environment variable is not set"}
     return get_vt_ip_report(ip, api_key)
+
+
+@mcp.tool()
+def career_sources(domain: str) -> dict:
+    """Discover ATS platforms and career pages used by a company.
+
+    Crawls common careers paths, detects ATS by URL patterns (Greenhouse,
+    Lever, Ashby, Workable, Recruitee, SmartRecruiters, Personio, BambooHR,
+    Teamtailor, Workday, iCIMS, Taleo), and falls back to Wayback Machine
+    CDX if no live careers page is found. The ATS choice is itself a
+    regional/company-stage signal.
+
+    Methodology: cybersleuth://tech-stack-recon
+
+    Args:
+        domain: Company domain to check (e.g. example.com)
+    """
+    return find_career_sources(domain)
+
+
+@mcp.tool()
+def job_postings(board_url: str, max_jobs: int = 50) -> dict:
+    """Fetch job postings from a discovered ATS board URL and extract tech-stack keywords.
+
+    Use career_sources() first — it returns a ``board_url`` for each discovered
+    ATS. Pass that URL here; the ATS platform and company handle are identified
+    automatically from the URL.
+
+    Supported ATS platforms with public JSON APIs: greenhouse, lever, ashby,
+    workable, recruitee, smartrecruiters, personio, bamboohr.
+
+    Returns per-job normalised records and aggregated keyword frequency counts
+    across all postings, categorised by language, framework, cloud, DB, etc.
+
+    Methodology: cybersleuth://tech-stack-recon
+
+    Args:
+        board_url: ATS board URL from career_sources() (e.g.
+                   "https://boards.greenhouse.io/acmecorp")
+        max_jobs: Maximum number of postings to fetch (default 50)
+    """
+    return fetch_job_postings(board_url, max_jobs)
+
+
+@mcp.tool()
+def github_recon(org: str, max_repos: int = 20) -> dict:
+    """Enumerate a GitHub organisation's public repos for tech-stack intelligence.
+
+    Returns org metadata, top repos by stars, aggregate language distribution,
+    tech keywords from dependency manifests (package.json, requirements.txt,
+    go.mod, Cargo.toml, etc.), and CI/CD tooling signals from GitHub Actions
+    workflow files. Set GITHUB_TOKEN for 5000 req/h instead of 60.
+
+    Methodology: cybersleuth://tech-stack-recon
+
+    Args:
+        org: GitHub organisation or user slug (e.g. "anthropics")
+        max_repos: Number of repos to inspect for deps/workflows (default 20)
+    """
+    return github_org_recon(org, max_repos)
+
+
+@mcp.tool()
+def tech_stack(domain: str, github_org: str | None = None) -> dict:
+    """Build a comprehensive tech-stack profile from job postings and GitHub.
+
+    Orchestrates: career_sources → job_postings (all ATS with public APIs) →
+    github_recon (if github_org provided). Merges tech keywords from all
+    sources with frequency counts and source attribution. Higher frequency =
+    multiple independent sources confirming the same technology.
+
+    Methodology: cybersleuth://tech-stack-recon
+
+    Args:
+        domain: Company domain (e.g. example.com)
+        github_org: GitHub organisation slug (optional; skipped if not provided)
+    """
+    return tech_stack_profile(domain, github_org)
 
 
 @mcp.tool()
