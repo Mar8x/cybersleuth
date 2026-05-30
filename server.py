@@ -25,6 +25,8 @@ from tools import (
     llm_fingerprint as _llm_fingerprint_impl,
     llm_probe_public_chat as _llm_probe_public_chat_impl,
     llm_security_probe as _llm_security_probe_impl,
+    get_privacy_policy,
+    scan_trackers,
 )
 
 mcp = FastMCP(
@@ -45,6 +47,7 @@ _PEOPLE_FILE = Path(__file__).resolve().parent / "people-osint.md"
 _COMPANY_DDR_FILE = Path(__file__).resolve().parent / "docs" / "company-ddr.md"
 _TECH_STACK_FILE = Path(__file__).resolve().parent / "docs" / "tech-stack-recon.md"
 _LLM_RECON_FILE = Path(__file__).resolve().parent / "docs" / "llm-recon.md"
+_PRIVACY_FILE = Path(__file__).resolve().parent / "docs" / "privacy-analysis.md"
 
 
 def _get_skill_content() -> str:
@@ -75,6 +78,11 @@ def _get_tech_stack_content() -> str:
 def _get_llm_recon_content() -> str:
     """Return LLM reconnaissance methodology from docs/llm-recon.md."""
     return _LLM_RECON_FILE.read_text(encoding="utf-8")
+
+
+def _get_privacy_content() -> str:
+    """Return privacy-analysis methodology from docs/privacy-analysis.md."""
+    return _PRIVACY_FILE.read_text(encoding="utf-8")
 
 
 @mcp.resource("cybersleuth://instructions")
@@ -111,6 +119,12 @@ def tech_stack_recon_resource() -> str:
 def llm_recon_resource() -> str:
     """LLM / AI surface reconnaissance methodology: passive fingerprint signals, OWASP LLM Top 10:2025 mapping, authorization tiers, research citations."""
     return _get_llm_recon_content()
+
+
+@mcp.resource("cybersleuth://privacy-analysis")
+def privacy_analysis_resource() -> str:
+    """Privacy & data handling analysis methodology: OPP-115 practice categories, jurisdictional compliance (GDPR/CCPA/LGPD/PIPL/PIPEDA), AI training red-flag detection, tracker risk database, contradiction patterns."""
+    return _get_privacy_content()
 
 
 @mcp.prompt(title="CyberSleuth system instructions")
@@ -451,6 +465,49 @@ def llm_security_probe(url: str, authorized: bool = False, authorization_note: s
         authorization_note: Free-text scope (engagement ID, asset, owner) — recorded for audit.
     """
     return _llm_security_probe_impl(url, authorized, authorization_note)
+
+
+@mcp.tool()
+def privacy_policy(domain: str) -> dict:
+    """Discover and analyse privacy-related documents for a domain.
+
+    Finds privacy policy, Terms of Service, and cookie policy URLs; fetches
+    and cleans text; detects jurisdictions (GDPR, CCPA/CPRA, LGPD, PIPL,
+    PIPEDA); maps text against OPP-115 data-practice categories (data
+    collection, use, sharing, retention, security, user rights, etc.);
+    flags AI/ML training data clauses; and produces per-jurisdiction
+    compliance gap analysis (missing mandatory elements per Art. 13/14,
+    CCPA 1798.135, etc.).
+
+    Cross-reference with tracker_scan() to challenge stated policy against
+    technical reality. Methodology: cybersleuth://privacy-analysis
+
+    Args:
+        domain: Target domain (e.g. example.com)
+    """
+    return get_privacy_policy(domain)
+
+
+@mcp.tool()
+def tracker_scan(domain: str) -> dict:
+    """Scan a domain's homepage for third-party trackers and consent mechanisms.
+
+    Checks HTML source against ~30 tracker entries (Meta Pixel, GA4, GTM,
+    Segment, Mixpanel, Amplitude, Hotjar, FullStory, Microsoft Clarity,
+    TikTok Pixel, LinkedIn Insight Tag, HubSpot, FingerprintJS, Criteo,
+    Adobe Analytics, OneTrust, Cookiebot, and more).
+
+    Detects high-risk context (healthcare, finance, children) and escalates
+    risk accordingly (Meta Pixel + healthcare = HIPAA risk flag). Returns
+    policy contradiction hints backed by enforcement precedents (CNIL GA4
+    ruling, FTC/HHS Meta Pixel guidance, GDPR fingerprinting obligations).
+
+    Methodology: cybersleuth://privacy-analysis
+
+    Args:
+        domain: Target domain (e.g. example.com)
+    """
+    return scan_trackers(domain)
 
 
 if __name__ == "__main__":

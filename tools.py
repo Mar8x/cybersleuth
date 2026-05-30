@@ -2889,4 +2889,1148 @@ __all__ = [
     'llm_fingerprint',
     'llm_probe_public_chat',
     'llm_security_probe',
+    'get_privacy_policy',
+    'scan_trackers',
 ]
+
+
+# ---------------------------------------------------------------------------
+# Privacy policy & tracker analysis
+#
+# Methodology in docs/privacy-analysis.md.
+# Grounded in: OPP-115 (ACL 2016), PoliGraph (USENIX Sec 2023),
+# PolicyChecker (ACM CCS 2023), WhoTracksMe, Disconnect.me taxonomy.
+# ---------------------------------------------------------------------------
+
+# --- Jurisdiction detection patterns ---
+# Each entry: (jurisdiction_id, display_name, required_elements_checklist)
+_JURISDICTION_PATTERNS: List[Dict] = [
+    {
+        'id': 'gdpr',
+        'name': 'GDPR (EU/EEA)',
+        'triggers': [
+            r'\bGDPR\b', r'General Data Protection Regulation',
+            r'EU\s+(?:General\s+)?Data Protection', r'DSGVO',
+            r'Datenschutz(?:grundverordnung)?', r'supervisory authority',
+            r'data subject rights', r'lawful basis', r'legal basis',
+            r'data protection officer', r'\bDPO\b',
+        ],
+        'required': [
+            'identity_of_controller',    # Art. 13(1)(a)
+            'dpo_contact',               # Art. 13(1)(b) — if DPO appointed
+            'purposes_and_legal_basis',  # Art. 13(1)(c)
+            'legitimate_interests',      # Art. 13(1)(d) — if LI used
+            'recipients_or_categories',  # Art. 13(1)(e)
+            'retention_periods',         # Art. 13(2)(a)
+            'data_subject_rights',       # Art. 13(2)(b): access, erasure, portability, objection
+            'right_to_withdraw_consent', # Art. 13(2)(c)
+            'right_to_lodge_complaint',  # Art. 13(2)(d)
+            'cross_border_transfers',    # Art. 13(1)(f)
+        ],
+        'regions': ['eu', 'eea', 'europe'],
+    },
+    {
+        'id': 'ccpa_cpra',
+        'name': 'CCPA/CPRA (California)',
+        'triggers': [
+            r'\bCCPA\b', r'\bCPRA\b',
+            r'California Consumer Privacy Act',
+            r'California Privacy Rights Act',
+            r'Do Not Sell or Share',
+            r'Limit the Use of.*Sensitive Personal Information',
+            r'California residents',
+        ],
+        'required': [
+            'categories_collected',       # 1798.100
+            'purposes_of_use',
+            'categories_shared_or_sold',  # 1798.120
+            'do_not_sell_or_share_link',  # 1798.135
+            'limit_sensitive_pi_link',    # CPRA 1798.121
+            'data_subject_rights_ca',     # access, deletion, correction, portability
+            'retention_periods',          # CPRA addition
+        ],
+        'regions': ['us', 'california'],
+    },
+    {
+        'id': 'lgpd',
+        'name': 'LGPD (Brazil)',
+        'triggers': [
+            r'\bLGPD\b', r'Lei Geral de Prote[cç][aã]o de Dados',
+            r'ANPD', r'Autoridade Nacional',
+            r'titular dos dados', r'dados pessoais',
+        ],
+        'required': [
+            'identity_of_controller',
+            'purposes_of_treatment',
+            'legitimate_interests',
+            'data_subject_rights_br',
+            'cross_border_transfers',
+            'dpo_contact',
+        ],
+        'regions': ['br', 'brazil'],
+    },
+    {
+        'id': 'pipl',
+        'name': 'PIPL (China)',
+        'triggers': [
+            r'\bPIPL\b', r'Personal Information Protection Law',
+            r'个人信息保护法', r'MIIT',
+        ],
+        'required': [
+            'identity_of_processor',
+            'purposes_and_methods',
+            'categories_of_pi',
+            'retention_periods',
+            'cross_border_transfers',
+            'data_subject_rights_cn',
+        ],
+        'regions': ['cn', 'china'],
+    },
+    {
+        'id': 'pipeda',
+        'name': 'PIPEDA (Canada)',
+        'triggers': [
+            r'\bPIPEDA\b', r'Personal Information Protection and Electronic Documents',
+            r'\bOPC\b', r'Office of the Privacy Commissioner',
+            r'Canadian residents',
+        ],
+        'required': [
+            'purposes_of_collection',
+            'consent_mechanism',
+            'data_subject_rights_ca',
+        ],
+        'regions': ['ca', 'canada'],
+    },
+]
+
+# --- OPP-115 inspired data-practice category patterns ---
+# Ten categories from Wilson et al. ACL 2016
+_PRACTICE_CATEGORIES: Dict[str, List[str]] = {
+    'data_collection': [
+        r'we collect', r'we gather', r'information (?:we|you) provide',
+        r'automatically collect', r'collected (?:from|when|by)',
+        r'types of (?:data|information) (?:we|that)',
+        r'personal (?:data|information) (?:includes?|such as)',
+    ],
+    'data_use': [
+        r'we use.*(?:to|for)', r'use (?:your|this|the) (?:data|information)',
+        r'process.*(?:in order to|to provide|to improve)',
+        r'purpose[s]? (?:of|for) (?:processing|using|collecting)',
+        r'used to (?:send|provide|improve|analyze|personalize)',
+    ],
+    'data_sharing': [
+        r'(?:share|disclose|transfer|sell|provide).*(?:third part|partner|affiliate|vendor)',
+        r'third.part(?:y|ies).*(?:receive|access|use)',
+        r'service provider[s]?', r'business partner[s]?',
+        r'advertising partner[s]?', r'data broker',
+    ],
+    'data_retention': [
+        r'retain.*(?:for|until|as long)', r'keep.*(?:for|until|as long)',
+        r'retention period', r'stor(?:e|ing|age).*(?:for|until|period)',
+        r'delete.*(?:when|after|upon)', r'how long',
+    ],
+    'data_security': [
+        r'secur(?:e|ity|ing).*(?:your|personal|data|information)',
+        r'encrypt(?:ion|ed|ing)', r'protect.*(?:your|data)',
+        r'safeguard', r'technical.*(?:and|or).*organizational.*measures',
+        r'ISO 27001', r'SOC 2',
+    ],
+    'user_choice_control': [
+        r'opt.out', r'opt.in', r'unsubscribe', r'withdraw.*consent',
+        r'manage.*(?:preferences|settings|cookies)',
+        r'you can (?:choose|control|stop|prevent)',
+        r'cookie (?:settings|preferences|consent)',
+    ],
+    'user_access_rights': [
+        r'right (?:to|of) access', r'right (?:to|of) (?:correct|rectif)',
+        r'right (?:to|of) (?:delet|eras)', r'right (?:to|of) portab',
+        r'data subject right', r'submit a request',
+        r'access.*your.*(?:data|information)', r'contact us.*(?:to|if)',
+    ],
+    'policy_change': [
+        r'updat(?:e|ing).*(?:this|our) (?:policy|notice)',
+        r'notif(?:y|ication).*(?:change|update)',
+        r'effective date', r'last (?:updated|revised|modified)',
+        r'material change[s]?',
+    ],
+    'do_not_track': [
+        r'do not track', r'\bDNT\b', r'browser.*(?:signal|setting).*track',
+        r'global privacy control', r'\bGPC\b',
+    ],
+    'international_audiences': [
+        r'cross.border', r'international (?:transfer|data flow)',
+        r'(?:transfer|send).*(?:outside|to).*(?:EU|EEA|country)',
+        r'Standard Contractual Clauses', r'\bSCC[s]?\b',
+        r'adequacy decision', r'children', r'under (?:13|16|18)',
+        r'\bCOPPA\b',
+    ],
+}
+
+# --- AI training red-flag patterns (EU AI Act Art. 53, GDPR Recital 47/49 abuse) ---
+_AI_TRAINING_PATTERNS: List[Dict] = [
+    {
+        'id': 'explicit_training',
+        'severity': 'HIGH',
+        'description': 'Explicit AI/ML model training disclosure',
+        'patterns': [
+            r'train(?:ing)?\s+(?:our\s+)?(?:AI|ML|machine learning|model)',
+            r'used?\s+to\s+train',
+            r'AI training',
+            r'model training',
+            r'fine.tun(?:e|ing)',
+        ],
+    },
+    {
+        'id': 'product_improvement_catchall',
+        'severity': 'MEDIUM',
+        'description': 'Broad "product improvement" clause (common LI catch-all)',
+        'patterns': [
+            r'improve\s+(?:our\s+)?(?:products?|services?|features?|model)',
+            r'product\s+(?:improvement|development|research)',
+            r'service\s+improvement',
+            r'develop\s+(?:new\s+)?features?',
+        ],
+    },
+    {
+        'id': 'aggregate_anonymized',
+        'severity': 'LOW',
+        'description': 'Aggregated/anonymized data for improvements (anonymisation claim)',
+        'patterns': [
+            r'(?:aggregat|anonymi[sz]|de.identif)(?:e|ed|ing)\s+(?:data|information)',
+            r'anonymi[sz]ed\s+(?:form|manner|way)',
+        ],
+    },
+    {
+        'id': 'opt_out_buried',
+        'severity': 'MEDIUM',
+        'description': 'AI training opt-out present but potentially buried',
+        'patterns': [
+            r'opt.out\s+of\s+(?:AI|ML|model|training)',
+            r'AI\s+(?:training\s+)?opt.out',
+            r'data\s+controls',
+        ],
+    },
+    {
+        'id': 'eu_ai_act_disclosure',
+        'severity': 'INFO',
+        'description': 'EU AI Act Art. 53 training data summary (GPAI compliance)',
+        'patterns': [
+            r'training\s+data\s+(?:summary|disclosure|transparency)',
+            r'EU\s+AI\s+Act',
+            r'GPAI',
+            r'general.purpose\s+AI',
+        ],
+    },
+]
+
+# --- Required disclosure checkers (regex per required element) ---
+_REQUIRED_ELEMENT_PATTERNS: Dict[str, List[str]] = {
+    'identity_of_controller': [
+        r'(?:we are|operated by|controller is|data controller)',
+        r'(?:company|organisation|entity)\s+(?:name|registered)',
+    ],
+    'dpo_contact': [
+        r'data protection officer', r'\bDPO\b',
+        r'dpo@', r'privacy@', r'datenschutz@',
+    ],
+    'purposes_and_legal_basis': [
+        r'legal basis', r'lawful basis',
+        r'legitimate interest[s]?', r'consent', r'contractual necessity',
+        r'purpose[s]?\s+(?:of|for)\s+processing',
+    ],
+    'legitimate_interests': [
+        r'legitimate interest[s]?',
+        r'balancing test',
+    ],
+    'recipients_or_categories': [
+        r'recipient[s]?\s+(?:of|include)',
+        r'categor(?:y|ies)\s+of\s+recipient',
+        r'share.*with', r'disclose.*to',
+    ],
+    'retention_periods': [
+        r'retent(?:ion)?\s+period', r'retain.*(?:for|up to)',
+        r'stor(?:e|age).*(?:for|up to|as long)',
+        r'(?:\d+\s+(?:day|month|year))',
+        r'how long',
+    ],
+    'data_subject_rights': [
+        r'right\s+(?:to|of)\s+(?:access|correct|eras|delet|portab|object)',
+        r'data subject right[s]?',
+        r'submit\s+a\s+(?:request|complaint)',
+        r'supervisory authority',
+    ],
+    'right_to_withdraw_consent': [
+        r'withdraw\s+(?:your\s+)?consent',
+        r'revoke\s+consent',
+    ],
+    'right_to_lodge_complaint': [
+        r'lodge\s+a\s+complaint',
+        r'supervisory authority',
+        r'data protection authority',
+    ],
+    'cross_border_transfers': [
+        r'(?:transfer|send|transmit).*(?:outside|to).*(?:EU|EEA|country|jurisdiction)',
+        r'Standard Contractual Clauses', r'\bSCC[s]?\b',
+        r'adequacy decision',
+        r'cross.border',
+        r'international\s+transfer',
+    ],
+    'do_not_sell_or_share_link': [
+        r'do not sell or share',
+        r'opt.out\s+of\s+(?:the\s+)?(?:sale|sharing)',
+    ],
+    'limit_sensitive_pi_link': [
+        r'limit\s+the\s+use\s+of',
+        r'sensitive\s+personal\s+information',
+    ],
+    'data_subject_rights_ca': [
+        r'right\s+to\s+(?:know|access|delet|correct|portab|opt.out)',
+        r'California\s+(?:resident[s]?|consumer[s]?)',
+    ],
+    'data_subject_rights_br': [
+        r'direitos?\s+do\s+titular',
+        r'right\s+(?:to|of)\s+(?:access|correct|delet|portab)',
+    ],
+    'data_subject_rights_cn': [
+        r'right\s+(?:to|of)\s+(?:access|correct|delet|portab)',
+        r'个人信息.*权利',
+    ],
+    'purposes_and_methods': [
+        r'purpose[s]?\s+(?:of|for)',
+        r'method[s]?\s+of\s+(?:processing|collection)',
+    ],
+    'categories_of_pi': [
+        r'categor(?:y|ies)\s+of\s+(?:personal\s+)?information',
+        r'types?\s+of\s+(?:personal\s+)?(?:data|information)',
+    ],
+    'identity_of_processor': [
+        r'(?:processor|controller)',
+        r'(?:we are|operated by)',
+    ],
+    'consent_mechanism': [
+        r'consent', r'opt.in', r'implied consent',
+        r'you agree', r'by using',
+    ],
+    'categories_collected': [
+        r'collect(?:ion)?\s+of\s+(?:personal\s+)?(?:data|information)',
+        r'(?:personal\s+)?(?:data|information)\s+(?:we|that)\s+collect',
+    ],
+    'purposes_of_use': [
+        r'use.*(?:to|for)', r'purpose[s]?\s+(?:of|for)\s+(?:using|processing)',
+    ],
+    'categories_shared_or_sold': [
+        r'share.*(?:with|to)', r'sell.*(?:data|information)',
+        r'disclose.*(?:third|partner)',
+    ],
+    'purposes_of_collection': [
+        r'purpose[s]?\s+(?:of|for)\s+collect',
+        r'why\s+we\s+collect',
+    ],
+    'purposes_of_treatment': [
+        r'purpose[s]?\s+of\s+(?:treatment|processing)',
+        r'finalidade[s]?',
+    ],
+}
+
+# --- Third-party tracker lookup table ---
+# Sourced from WhoTracksMe taxonomy + Disconnect.me categories
+# Each entry: name, category, parent_company, risk_level, compliance_notes
+_TRACKER_DB: List[Dict] = [
+    # HIGH risk — documented enforcement precedents
+    {
+        'id': 'meta_pixel',
+        'name': 'Meta Pixel (Facebook Pixel)',
+        'parent': 'Meta Platforms',
+        'category': 'advertising',
+        'risk': 'HIGH',
+        'patterns': [
+            r'connect\.facebook\.net/[^"\']+/fbevents\.js',
+            r'facebook\.com/tr\b',
+            r'fbq\s*\(',
+            r'_fbp\b',
+        ],
+        'notes': (
+            'Constitutes "sharing" under CCPA/CPRA, triggering opt-out obligations. '
+            'Automatic Advanced Matching may capture form data without per-field consent. '
+            'HIPAA risk in healthcare context — no BAA available from Meta. '
+            'FTC/HHS joint letter July 2023; multiple hospital settlements ($6.6M–$18.4M).'
+        ),
+    },
+    {
+        'id': 'ga4',
+        'name': 'Google Analytics 4 (GA4)',
+        'parent': 'Google / Alphabet',
+        'category': 'analytics',
+        'risk': 'HIGH',
+        'patterns': [
+            r'googletagmanager\.com/gtag/js\?id=G-',
+            r'google-analytics\.com/g/collect',
+            r'gtag\s*\(\s*["\']config["\'],\s*["\']G-',
+            r'G-[A-Z0-9]{8,}',
+        ],
+        'notes': (
+            'CNIL (France) ruled GA4 illegal under GDPR Art. 44 (unlawful US transfer) Feb 2022. '
+            'Austrian, Italian, Danish DPAs issued parallel rulings 2022–2023. '
+            '"No cross-border transfer" claim + GA4 presence = documented GDPR violation pattern.'
+        ),
+    },
+    {
+        'id': 'google_tag_manager',
+        'name': 'Google Tag Manager (GTM)',
+        'parent': 'Google / Alphabet',
+        'category': 'tag_management',
+        'risk': 'MEDIUM',
+        'patterns': [
+            r'googletagmanager\.com/gtm\.js',
+            r'GTM-[A-Z0-9]{6,}',
+        ],
+        'notes': (
+            'Tag management layer — actual risk depends on which tags are deployed. '
+            'Can silently load additional trackers not disclosed in privacy policy.'
+        ),
+    },
+    {
+        'id': 'google_ads',
+        'name': 'Google Ads / Remarketing',
+        'parent': 'Google / Alphabet',
+        'category': 'advertising',
+        'risk': 'HIGH',
+        'patterns': [
+            r'googleadservices\.com',
+            r'googlesyndication\.com',
+            r'google\.com/pagead',
+            r'gtag\s*\(\s*["\']config["\'],\s*["\']AW-',
+            r'AW-\d{8,}',
+        ],
+        'notes': 'Cross-site tracking for remarketing. Constitutes "sharing" under CCPA.',
+    },
+    {
+        'id': 'segment',
+        'name': 'Segment (Twilio)',
+        'parent': 'Twilio',
+        'category': 'analytics',
+        'risk': 'MEDIUM',
+        'patterns': [
+            r'cdn\.segment\.com',
+            r'api\.segment\.(?:io|com)',
+            r'analytics\.js',
+            r'analytics\.identify\s*\(',
+        ],
+        'notes': (
+            'Data routing layer — routes events to downstream destinations (ad platforms, '
+            'data warehouses). Policy disclosing only "analytics" but routing via Segment '
+            'to ad-tech = likely under-disclosure of recipients.'
+        ),
+    },
+    {
+        'id': 'mixpanel',
+        'name': 'Mixpanel',
+        'parent': 'Mixpanel',
+        'category': 'analytics',
+        'risk': 'LOW',
+        'patterns': [r'cdn\.mxpnl\.com', r'api\.mixpanel\.com', r'mixpanel\.init\s*\('],
+        'notes': 'Claims processor role. Lower direct data-broker risk.',
+    },
+    {
+        'id': 'amplitude',
+        'name': 'Amplitude',
+        'parent': 'Amplitude',
+        'category': 'analytics',
+        'risk': 'LOW',
+        'patterns': [r'cdn\.amplitude\.com', r'api\.amplitude\.com', r'amplitude\.getInstance'],
+        'notes': 'Claims processor role. Watch for ad-platform integrations in configuration.',
+    },
+    {
+        'id': 'hotjar',
+        'name': 'Hotjar',
+        'parent': 'Hotjar (Contentsquare)',
+        'category': 'session_replay',
+        'risk': 'MEDIUM',
+        'patterns': [r'static\.hotjar\.com', r'hj\s*\(', r'hjid\b'],
+        'notes': (
+            'Session replay captures mouse movements, clicks, keystrokes. '
+            'May capture PII (form fields, health info) without explicit disclosure. '
+            'GDPR requires explicit lawful basis for session replay.'
+        ),
+    },
+    {
+        'id': 'fullstory',
+        'name': 'FullStory',
+        'parent': 'FullStory',
+        'category': 'session_replay',
+        'risk': 'MEDIUM',
+        'patterns': [r'fullstory\.com/s/fs\.js', r'FS\.identify\s*\(', r'_fs_'],
+        'notes': 'Session replay. Same PII capture risks as Hotjar.',
+    },
+    {
+        'id': 'microsoft_clarity',
+        'name': 'Microsoft Clarity',
+        'parent': 'Microsoft',
+        'category': 'session_replay',
+        'risk': 'MEDIUM',
+        'patterns': [r'clarity\.ms', r'clarity\s*\(\s*["\']set'],
+        'notes': 'Session replay + heatmaps. Data processed in Microsoft Azure (US).',
+    },
+    {
+        'id': 'tiktok_pixel',
+        'name': 'TikTok Pixel',
+        'parent': 'ByteDance',
+        'category': 'advertising',
+        'risk': 'HIGH',
+        'patterns': [r'analytics\.tiktok\.com', r'ttq\.load\s*\(', r'TiktokAnalyticsObject'],
+        'notes': (
+            'Data transferred to ByteDance (China). PIPL + GDPR cross-border transfer risk. '
+            'Several EU DPAs investigating; US FTC inquiry ongoing.'
+        ),
+    },
+    {
+        'id': 'linkedin_insight',
+        'name': 'LinkedIn Insight Tag',
+        'parent': 'Microsoft / LinkedIn',
+        'category': 'advertising',
+        'risk': 'MEDIUM',
+        'patterns': [r'snap\.licdn\.com', r'_linkedin_partner_id', r'linkedin\.com/px'],
+        'notes': 'B2B remarketing. Cross-site tracking via LinkedIn member cookies.',
+    },
+    {
+        'id': 'hubspot',
+        'name': 'HubSpot',
+        'parent': 'HubSpot',
+        'category': 'crm_marketing',
+        'risk': 'MEDIUM',
+        'patterns': [r'js\.hs-scripts\.com', r'js\.hubspot\.com', r'_hsq\s*='],
+        'notes': 'Marketing automation. Tracks visitors and links activity to CRM records.',
+    },
+    {
+        'id': 'intercom',
+        'name': 'Intercom',
+        'parent': 'Intercom',
+        'category': 'crm_marketing',
+        'risk': 'LOW',
+        'patterns': [r'widget\.intercom\.io', r'Intercom\s*\('],
+        'notes': 'Customer messaging. Collects user identity and conversation data.',
+    },
+    {
+        'id': 'zendesk',
+        'name': 'Zendesk',
+        'parent': 'Zendesk',
+        'category': 'crm_marketing',
+        'risk': 'LOW',
+        'patterns': [r'static\.zdassets\.com', r'zE\s*\('],
+        'notes': 'Customer support. Chat transcripts may contain PII.',
+    },
+    {
+        'id': 'crisp',
+        'name': 'Crisp',
+        'parent': 'Crisp IM',
+        'category': 'crm_marketing',
+        'risk': 'LOW',
+        'patterns': [r'client\.crisp\.chat', r'\$crisp\s*='],
+        'notes': 'Live chat SaaS.',
+    },
+    {
+        'id': 'salesforce_beacon',
+        'name': 'Salesforce / Pardot',
+        'parent': 'Salesforce',
+        'category': 'crm_marketing',
+        'risk': 'MEDIUM',
+        'patterns': [r'pi\.pardot\.com', r'salesforce\.com/beacon', r'pardot\.js'],
+        'notes': 'Marketing automation and lead tracking.',
+    },
+    {
+        'id': 'adobe_analytics',
+        'name': 'Adobe Analytics',
+        'parent': 'Adobe',
+        'category': 'analytics',
+        'risk': 'MEDIUM',
+        'patterns': [r'omtrdc\.net', r'2o7\.net', r'adobedtm\.com', r'AppMeasurement\.js'],
+        'notes': 'Enterprise analytics. Often used alongside Adobe Audience Manager (DMP).',
+    },
+    {
+        'id': 'criteo',
+        'name': 'Criteo',
+        'parent': 'Criteo',
+        'category': 'advertising',
+        'risk': 'HIGH',
+        'patterns': [r'static\.criteo\.net', r'cas\.criteo\.com', r'criteo_q\s*='],
+        'notes': 'Retargeting/ad network. Explicit data broker; shares with advertising ecosystem.',
+    },
+    {
+        'id': 'outbrain',
+        'name': 'Outbrain',
+        'parent': 'Outbrain',
+        'category': 'advertising',
+        'risk': 'MEDIUM',
+        'patterns': [r'widgets\.outbrain\.com', r'outbrain\.com/paid-links'],
+        'notes': 'Content recommendation network with cross-site tracking.',
+    },
+    {
+        'id': 'taboola',
+        'name': 'Taboola',
+        'parent': 'Taboola',
+        'category': 'advertising',
+        'risk': 'MEDIUM',
+        'patterns': [r'cdn\.taboola\.com', r'trc\.taboola\.com'],
+        'notes': 'Content recommendation network with cross-site tracking.',
+    },
+    {
+        'id': 'fingerprint_js',
+        'name': 'FingerprintJS / Fingerprint Pro',
+        'parent': 'Fingerprint',
+        'category': 'fingerprinting',
+        'risk': 'HIGH',
+        'patterns': [r'fpjscdn\.net', r'fpjs\.io', r'FingerprintJS', r'fpPromise'],
+        'notes': (
+            'Device fingerprinting without cookies. Constitutes a persistent pseudonymous '
+            'identifier under GDPR Recital 30. Requires explicit disclosure and lawful basis.'
+        ),
+    },
+    {
+        'id': 'onetrust',
+        'name': 'OneTrust (Consent Manager)',
+        'parent': 'OneTrust',
+        'category': 'consent_management',
+        'risk': 'INFO',
+        'patterns': [r'cdn\.cookielaw\.org', r'optanon', r'OneTrust'],
+        'notes': 'Consent management platform. Presence indicates consent mechanism exists.',
+    },
+    {
+        'id': 'cookiebot',
+        'name': 'Cookiebot (Consent Manager)',
+        'parent': 'Usercentrics / Cookiebot',
+        'category': 'consent_management',
+        'risk': 'INFO',
+        'patterns': [r'consent\.cookiebot\.com', r'CookieConsent\s*='],
+        'notes': 'Consent management platform.',
+    },
+    {
+        'id': 'usercentrics',
+        'name': 'Usercentrics',
+        'parent': 'Usercentrics',
+        'category': 'consent_management',
+        'risk': 'INFO',
+        'patterns': [r'app\.usercentrics\.eu', r'usercentrics'],
+        'notes': 'Consent management platform.',
+    },
+    {
+        'id': 'osano',
+        'name': 'Osano (Consent Manager)',
+        'parent': 'Osano',
+        'category': 'consent_management',
+        'risk': 'INFO',
+        'patterns': [r'cmp\.osano\.com'],
+        'notes': 'Consent management platform.',
+    },
+    {
+        'id': 'openai_widget',
+        'name': 'OpenAI (embedded widget/SDK)',
+        'parent': 'OpenAI',
+        'category': 'ai_training',
+        'risk': 'HIGH',
+        'patterns': [r'cdn\.openai\.com', r'platform\.openai\.com/js'],
+        'notes': (
+            'OpenAI API usage may subject user inputs to OpenAI training unless '
+            'API opt-out is configured. Requires explicit disclosure under GDPR and EU AI Act.'
+        ),
+    },
+    {
+        'id': 'sentry',
+        'name': 'Sentry',
+        'parent': 'Functional Software (Sentry)',
+        'category': 'observability',
+        'risk': 'LOW',
+        'patterns': [r'browser\.sentry-cdn\.com', r'Sentry\.init\s*\(', r'sentry_key'],
+        'notes': 'Error tracking. May capture stack traces with PII if not scrubbed.',
+    },
+    {
+        'id': 'datadog',
+        'name': 'Datadog RUM',
+        'parent': 'Datadog',
+        'category': 'observability',
+        'risk': 'LOW',
+        'patterns': [r'browser-intake\.datadoghq\.(?:com|eu)', r'DD_RUM', r'datadogrum'],
+        'notes': 'Real User Monitoring. May capture session data including URLs with PII.',
+    },
+]
+
+# Context keywords that raise tracker risk level (industry-specific)
+_HIGH_RISK_CONTEXT_KEYWORDS: Dict[str, List[str]] = {
+    'healthcare': [
+        r'\b(?:health|medical|hospital|clinic|patient|diagnosis|treatment|prescription'
+        r'|telehealth|therapy|mental health|medication|doctor|physician)\b',
+    ],
+    'finance': [
+        r'\b(?:bank|credit|loan|mortgage|investment|insurance|fintech|trading'
+        r'|financial|account|payment|wallet)\b',
+    ],
+    'children': [
+        r'\b(?:children|kids|child|under 13|under thirteen|COPPA|parental consent)\b',
+    ],
+}
+
+_PRIVACY_POLICY_PATHS = [
+    '/privacy-policy', '/privacy', '/legal/privacy', '/legal/privacy-policy',
+    '/privacypolicy', '/privacy_policy', '/data-privacy', '/data-protection',
+    '/datenschutz', '/politica-de-privacidade', '/politique-de-confidentialite',
+    '/terms', '/terms-of-service', '/terms-and-conditions', '/tos',
+    '/legal/terms', '/legal', '/legal/terms-of-service',
+    '/cookie-policy', '/cookies', '/legal/cookies',
+    '/gdpr', '/legal/gdpr', '/ccpa', '/legal/ccpa',
+]
+
+_PRIVACY_FETCH_TIMEOUT = 15
+_TRACKER_SCAN_TIMEOUT = 15
+_MAX_POLICY_TEXT_CHARS = 50_000  # ~10K tokens
+
+
+def _strip_html(html: str) -> str:
+    """Strip HTML tags and normalise whitespace."""
+    text = re.sub(r'<style[^>]*>.*?</style>', ' ', html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<script[^>]*>.*?</script>', ' ', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'&nbsp;', ' ', text)
+    text = re.sub(r'&amp;', '&', text)
+    text = re.sub(r'&lt;', '<', text)
+    text = re.sub(r'&gt;', '>', text)
+    text = re.sub(r'&#\d+;', ' ', text)
+    text = re.sub(r'\s{2,}', ' ', text)
+    return text.strip()
+
+
+def _detect_jurisdictions(text: str) -> List[Dict]:
+    """Detect which privacy jurisdiction(s) a policy addresses."""
+    found = []
+    text_lower = text.lower()
+    for jur in _JURISDICTION_PATTERNS:
+        triggered = any(
+            re.search(p, text, flags=re.IGNORECASE)
+            for p in jur['triggers']
+        )
+        if triggered:
+            found.append({
+                'id': jur['id'],
+                'name': jur['name'],
+                'regions': jur['regions'],
+            })
+    return found
+
+
+def _check_required_elements(text: str, jurisdiction_id: str) -> Dict[str, bool]:
+    """Check presence of required disclosure elements for a jurisdiction."""
+    jur = next((j for j in _JURISDICTION_PATTERNS if j['id'] == jurisdiction_id), None)
+    if not jur:
+        return {}
+    results = {}
+    for element in jur['required']:
+        patterns = _REQUIRED_ELEMENT_PATTERNS.get(element, [])
+        present = any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+        results[element] = present
+    return results
+
+
+def _detect_practice_categories(text: str) -> Dict[str, bool]:
+    """Map text against OPP-115 data-practice categories."""
+    found = {}
+    for cat, patterns in _PRACTICE_CATEGORIES.items():
+        found[cat] = any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+    return found
+
+
+def _detect_ai_training(text: str) -> List[Dict]:
+    """Detect AI/ML training data usage clauses and red-flag patterns."""
+    hits = []
+    for item in _AI_TRAINING_PATTERNS:
+        matched_patterns = []
+        for p in item['patterns']:
+            m = re.search(p, text, flags=re.IGNORECASE)
+            if m:
+                # Include a short excerpt for context
+                start = max(0, m.start() - 80)
+                end = min(len(text), m.end() + 120)
+                matched_patterns.append({
+                    'pattern': p,
+                    'excerpt': text[start:end].strip(),
+                })
+        if matched_patterns:
+            hits.append({
+                'id': item['id'],
+                'severity': item['severity'],
+                'description': item['description'],
+                'matches': matched_patterns[:2],  # first 2 occurrences
+            })
+    return hits
+
+
+def _find_policy_urls(domain: str) -> Dict[str, Optional[str]]:
+    """
+    Discover privacy-related document URLs for a domain.
+    Returns a dict: {document_type: url_or_None}.
+    """
+    base = domain.rstrip('/')
+    if not base.startswith('http'):
+        base = f'https://{base}'
+
+    headers = {'User-Agent': 'CyberSleuth/1.0'}
+    found: Dict[str, Optional[str]] = {
+        'privacy_policy': None,
+        'terms_of_service': None,
+        'cookie_policy': None,
+        'dpa': None,
+    }
+
+    # Scan paths
+    for path in _PRIVACY_POLICY_PATHS:
+        if all(found.values()):
+            break
+        try:
+            resp = requests.get(
+                base + path, headers=headers,
+                timeout=_PRIVACY_FETCH_TIMEOUT,
+                allow_redirects=True,
+            )
+            if resp.status_code != 200:
+                continue
+            url = str(resp.url)
+            path_lower = path.lower()
+            if any(k in path_lower for k in ('privacy', 'datenschutz', 'privacidade',
+                                              'confidentialite', 'gdpr', 'ccpa', 'data-prot')):
+                if not found['privacy_policy']:
+                    found['privacy_policy'] = url
+            elif any(k in path_lower for k in ('terms', 'tos', 'conditions')):
+                if not found['terms_of_service']:
+                    found['terms_of_service'] = url
+            elif 'cookie' in path_lower:
+                if not found['cookie_policy']:
+                    found['cookie_policy'] = url
+            elif 'dpa' in path_lower or 'data-processing' in path_lower:
+                if not found['dpa']:
+                    found['dpa'] = url
+        except requests.exceptions.RequestException:
+            continue
+
+    # Also scan homepage for policy links if any still missing
+    if not all(found.values()):
+        try:
+            resp = requests.get(
+                base, headers=headers,
+                timeout=_PRIVACY_FETCH_TIMEOUT,
+                allow_redirects=True,
+            )
+            if resp.status_code == 200:
+                # Find anchor tags
+                for m in re.finditer(
+                    r'href=["\']([^"\']+)["\'][^>]*>[^<]*(?:privacy|datenschutz|cookie|terms|legal)',
+                    resp.text, flags=re.IGNORECASE
+                ):
+                    href = m.group(1)
+                    if href.startswith('/'):
+                        href = base + href
+                    elif not href.startswith('http'):
+                        continue
+                    href_lower = href.lower()
+                    if any(k in href_lower for k in ('privacy', 'datenschutz', 'dsgvo')):
+                        if not found['privacy_policy']:
+                            found['privacy_policy'] = href
+                    elif 'cookie' in href_lower:
+                        if not found['cookie_policy']:
+                            found['cookie_policy'] = href
+                    elif any(k in href_lower for k in ('terms', 'tos', 'conditions')):
+                        if not found['terms_of_service']:
+                            found['terms_of_service'] = href
+        except requests.exceptions.RequestException:
+            pass
+
+    return found
+
+
+def get_privacy_policy(domain: str) -> Dict:
+    """
+    Discover and analyse privacy-related documents for a domain.
+
+    Discovers privacy policy, ToS, and cookie policy URLs; fetches and
+    cleans text; detects jurisdictions (GDPR, CCPA/CPRA, LGPD, PIPL,
+    PIPEDA); maps text against OPP-115 data-practice categories; flags
+    AI/ML training data clauses; and checks for mandatory disclosure
+    elements per each detected jurisdiction.
+
+    Grounded in: OPP-115 (ACL 2016), PoliGraph (USENIX Sec 2023),
+    PolicyChecker (ACM CCS 2023), EU AI Act Art. 53.
+
+    Methodology: cybersleuth://privacy-analysis
+
+    Args:
+        domain: Target domain (e.g. example.com)
+
+    Returns:
+        Dict with discovered URLs, cleaned policy text, detected
+        jurisdictions, OPP-115 practice categories, AI training
+        indicators, per-jurisdiction compliance gap analysis, and
+        cross-reference hints for tracker_scan().
+    """
+    headers = {'User-Agent': 'CyberSleuth/1.0'}
+    policy_urls = _find_policy_urls(domain)
+
+    # Fetch and combine text from discovered documents
+    texts: Dict[str, str] = {}
+    fetch_errors: List[str] = []
+
+    for doc_type, url in policy_urls.items():
+        if not url:
+            continue
+        try:
+            resp = requests.get(
+                url, headers=headers,
+                timeout=_PRIVACY_FETCH_TIMEOUT,
+                allow_redirects=True,
+            )
+            if resp.status_code == 200:
+                raw = _strip_html(resp.text)
+                texts[doc_type] = raw[:_MAX_POLICY_TEXT_CHARS]
+        except requests.exceptions.RequestException as e:
+            fetch_errors.append(f'{doc_type}: {str(e)[:80]}')
+
+    combined_text = '\n\n'.join(texts.values())
+
+    # Detect last-updated date
+    last_updated_match = re.search(
+        r'(?:last\s+updated|last\s+revised|effective date|updated\s+on)[:\s]+([A-Za-z0-9 ,/.-]+)',
+        combined_text, flags=re.IGNORECASE,
+    )
+    last_updated = last_updated_match.group(1).strip()[:40] if last_updated_match else None
+
+    # Run all analyses
+    jurisdictions = _detect_jurisdictions(combined_text)
+    practice_categories = _detect_practice_categories(combined_text)
+    ai_training_flags = _detect_ai_training(combined_text)
+
+    # Per-jurisdiction compliance gap
+    compliance_gaps: Dict[str, Dict] = {}
+    for jur in jurisdictions:
+        elements = _check_required_elements(combined_text, jur['id'])
+        missing = [k for k, v in elements.items() if not v]
+        compliance_gaps[jur['id']] = {
+            'jurisdiction': jur['name'],
+            'required_elements_checked': len(elements),
+            'present': [k for k, v in elements.items() if v],
+            'missing': missing,
+            'gap_score': f"{len(missing)}/{len(elements)} missing",
+        }
+
+    # Cross-reference hints: flag subdomains that would corroborate or contradict
+    cross_ref_hints = []
+    if any(v for v in practice_categories.values() if 'data_sharing' in practice_categories):
+        cross_ref_hints.append(
+            'Run tracker_scan() to cross-reference stated sharing policy against embedded trackers'
+        )
+    if ai_training_flags:
+        cross_ref_hints.append(
+            'Run llm_fingerprint() to check for LLM API exposure consistent with training data use'
+        )
+    if not jurisdictions:
+        cross_ref_hints.append(
+            'No jurisdiction detected — policy may be too short or behind auth; try fetching manually'
+        )
+
+    return {
+        'domain': domain,
+        'documents_found': {k: v for k, v in policy_urls.items() if v},
+        'documents_missing': [k for k, v in policy_urls.items() if not v],
+        'last_updated': last_updated,
+        'word_count': len(combined_text.split()) if combined_text else 0,
+        'jurisdictions_detected': jurisdictions,
+        'practice_categories': practice_categories,
+        'ai_training_indicators': ai_training_flags,
+        'compliance_gaps': compliance_gaps,
+        'cross_reference_hints': cross_ref_hints,
+        'policy_text': {k: v for k, v in texts.items()},
+        'fetch_errors': fetch_errors,
+        'query_info': {
+            'domain': domain,
+            'timestamp': datetime.datetime.now(_UTC).isoformat(),
+            'methodology': 'cybersleuth://privacy-analysis',
+        },
+    }
+
+
+def scan_trackers(domain: str) -> Dict:
+    """
+    Scan a domain's homepage for third-party trackers and consent mechanisms.
+
+    Checks HTML source against an embedded tracker database (~30 entries)
+    derived from WhoTracksMe taxonomy and Disconnect.me categories. Detects
+    advertising, analytics, session replay, fingerprinting, CRM/marketing,
+    observability, consent management, and AI-training trackers.
+
+    For each tracker: name, parent company, category, risk level, and
+    policy compliance implications are returned.
+
+    High-risk context detection: presence of healthcare, finance, or
+    children's content keywords raises effective risk level of certain
+    trackers (Meta Pixel + healthcare = HIPAA risk).
+
+    Methodology: cybersleuth://privacy-analysis
+
+    Args:
+        domain: Target domain (e.g. example.com)
+
+    Returns:
+        Dict with detected trackers, consent mechanism status, high-risk
+        context flags, policy contradiction hints, and tracker count by
+        category/risk.
+    """
+    base = domain.rstrip('/')
+    if not base.startswith('http'):
+        base = f'https://{base}'
+
+    headers = {'User-Agent': 'CyberSleuth/1.0'}
+    page_text = ''
+    page_urls_scanned: List[str] = []
+    fetch_error: Optional[str] = None
+
+    # Scan homepage + a second pass on JS-heavy pages
+    try:
+        resp = requests.get(
+            base, headers=headers,
+            timeout=_TRACKER_SCAN_TIMEOUT,
+            allow_redirects=True,
+        )
+        if resp.status_code == 200:
+            page_text = resp.text
+            page_urls_scanned.append(str(resp.url))
+    except requests.exceptions.RequestException as e:
+        fetch_error = str(e)[:120]
+
+    # Detect high-risk context from page text
+    context_flags: List[str] = []
+    for context, patterns in _HIGH_RISK_CONTEXT_KEYWORDS.items():
+        if any(re.search(p, page_text, flags=re.IGNORECASE) for p in patterns):
+            context_flags.append(context)
+
+    # Detect trackers
+    detected: List[Dict] = []
+    seen_ids: set = set()
+    for tracker in _TRACKER_DB:
+        if tracker['id'] in seen_ids:
+            continue
+        for pattern in tracker['patterns']:
+            if re.search(pattern, page_text, flags=re.IGNORECASE):
+                entry = {
+                    'id': tracker['id'],
+                    'name': tracker['name'],
+                    'parent': tracker['parent'],
+                    'category': tracker['category'],
+                    'risk': tracker['risk'],
+                    'notes': tracker['notes'],
+                }
+                # Escalate risk for high-risk contexts
+                if tracker['risk'] == 'MEDIUM' and context_flags:
+                    entry['risk_escalated_to'] = 'HIGH'
+                    entry['risk_reason'] = f"Context: {', '.join(context_flags)}"
+                seen_ids.add(tracker['id'])
+                detected.append(entry)
+                break
+
+    # Separate consent management from tracking findings
+    consent_mgmt = [t for t in detected if t['category'] == 'consent_management']
+    trackers = [t for t in detected if t['category'] != 'consent_management']
+
+    # Policy contradiction hints
+    contradiction_hints: List[Dict] = []
+
+    has_meta_pixel = any(t['id'] == 'meta_pixel' for t in trackers)
+    has_ga4 = any(t['id'] == 'ga4' for t in trackers)
+    has_fingerprint = any(t['id'] == 'fingerprint_js' for t in trackers)
+
+    if has_meta_pixel:
+        hint = {
+            'type': 'do_not_share_contradiction',
+            'severity': 'HIGH',
+            'finding': 'Meta Pixel detected',
+            'contradiction': (
+                'Any "we do not sell or share personal data with third parties for advertising" '
+                'claim is contradicted by Meta Pixel presence. Meta Pixel constitutes "sharing" '
+                'under CCPA/CPRA. Automatic Advanced Matching may capture form PII without consent.'
+            ),
+            'enforcement_precedent': 'FTC/HHS July 2023; Novant Health $6.6M; Mass General $18.4M',
+        }
+        if 'healthcare' in context_flags:
+            hint['hipaa_risk'] = 'HIGH — health context + Meta Pixel = documented HIPAA violation pattern'
+        contradiction_hints.append(hint)
+
+    if has_ga4:
+        contradiction_hints.append({
+            'type': 'cross_border_transfer_contradiction',
+            'severity': 'HIGH',
+            'finding': 'Google Analytics 4 (GA4) detected',
+            'contradiction': (
+                'Any "we do not transfer data outside the EU/EEA" claim is contradicted by '
+                'GA4 presence. CNIL (Feb 2022), Austrian, Italian, Danish DPAs all ruled '
+                'GA4 violates GDPR Art. 44 due to unlawful US data transfer.'
+            ),
+            'enforcement_precedent': 'CNIL Feb 2022 + Austrian/Italian/Danish DPA rulings 2022-2023',
+        })
+
+    if has_fingerprint:
+        contradiction_hints.append({
+            'type': 'tracking_without_consent',
+            'severity': 'HIGH',
+            'finding': 'FingerprintJS device fingerprinting detected',
+            'contradiction': (
+                'Device fingerprinting constitutes persistent pseudonymous identification '
+                'under GDPR Recital 30 and requires disclosure + lawful basis. '
+                'Consent banners covering only cookies do not cover fingerprinting.'
+            ),
+        })
+
+    advertising_trackers = [t for t in trackers if t['category'] == 'advertising']
+    session_replay = [t for t in trackers if t['category'] == 'session_replay']
+
+    if advertising_trackers and not consent_mgmt:
+        contradiction_hints.append({
+            'type': 'no_consent_mechanism',
+            'severity': 'HIGH',
+            'finding': f'{len(advertising_trackers)} advertising tracker(s) with no consent banner detected',
+            'contradiction': (
+                'Advertising trackers require prior consent under GDPR and ePrivacy Directive. '
+                'No consent management platform detected on this page.'
+            ),
+        })
+
+    if session_replay:
+        contradiction_hints.append({
+            'type': 'session_replay_pii_risk',
+            'severity': 'MEDIUM',
+            'finding': f"Session replay tool(s) detected: {', '.join(t['name'] for t in session_replay)}",
+            'contradiction': (
+                'Session replay captures user interactions including potential PII in form fields. '
+                'Requires explicit disclosure as a data collection practice (OPP-115: Data Collection). '
+                'GDPR requires explicit lawful basis; most cookie banners do not cover session replay.'
+            ),
+        })
+
+    # Summary counts
+    by_category: Dict[str, int] = {}
+    by_risk: Dict[str, int] = {}
+    for t in trackers:
+        by_category[t['category']] = by_category.get(t['category'], 0) + 1
+        risk_key = t.get('risk_escalated_to', t['risk'])
+        by_risk[risk_key] = by_risk.get(risk_key, 0) + 1
+
+    return {
+        'domain': domain,
+        'pages_scanned': page_urls_scanned,
+        'fetch_error': fetch_error,
+        'context_flags': context_flags,
+        'trackers_detected': trackers,
+        'consent_mechanisms': consent_mgmt,
+        'tracker_count': len(trackers),
+        'by_category': by_category,
+        'by_risk': by_risk,
+        'contradiction_hints': contradiction_hints,
+        'query_info': {
+            'domain': domain,
+            'timestamp': datetime.datetime.now(_UTC).isoformat(),
+            'tracker_db_version': f'{len(_TRACKER_DB)} entries',
+            'methodology': 'cybersleuth://privacy-analysis',
+        },
+    }

@@ -125,6 +125,14 @@ If any layer is **not** shared, document and reason why — this is intelligence
 - **Ransomware victim checks**: For "has this org been listed as a ransomware victim?", use **web fetch** on [ransomware.live](https://www.ransomware.live) (browse or search the site) until an official API or stable search endpoint is available; cite the source when using this in reports.
 - **Infostealer and credential-exposure intelligence**: Where available (e.g. Hudson Rock Cavalier or similar infostealer/credential-leak services), cross-reference the target domain or organisation to identify confirmed infostealer infections tied to the domain, exposed credentials or session cookies for the target's login or auth URLs (employee or user), and risk context (account takeover, lateral SaaS movement, session hijacking). When producing recon reports, include an infostealer exposure section when such data is used; cite the source (e.g. Hudson Rock Infostealer Intelligence) and reference public breach or stealer listings (e.g. Infostealers.com) where relevant
 
+### Privacy & Data Handling Analysis
+- Use `privacy_policy(domain)` to discover and analyse privacy policy, ToS, and cookie policy. Returns detected jurisdictions (GDPR, CCPA/CPRA, LGPD, PIPL, PIPEDA), OPP-115 data-practice categories, AI/ML training clause flags, and per-jurisdiction compliance gap analysis (mandatory elements missing per Art. 13/14, CCPA 1798.135, etc.).
+- Use `tracker_scan(domain)` to detect third-party trackers on the homepage (~30 entries: Meta Pixel, GA4, GTM, Segment, Hotjar, FingerprintJS, TikTok Pixel, etc.). Returns enforcement-backed contradiction hints: Meta Pixel + "no sharing" claim → CCPA/HIPAA flag; GA4 + "no EU transfer" claim → GDPR Art. 44 documented violation pattern; FingerprintJS + no consent banner → GDPR Recital 30.
+- High-risk context detection: healthcare, finance, or children's keywords on the page escalate tracker risk levels and trigger sector-specific flags (HIPAA, COPPA).
+- AI training detection: flags "train our models", "product improvement" catch-alls, and EU AI Act Art. 53 GPAI disclosure compliance (live Aug 2025). Cookie TCF signals do NOT cover AI training data collection — treat separately.
+- Cross-reference: `builtwith_lookup` corroborates trackers; `certificate_info` subdomains (`analytics.*`, `pixel.*`) confirm tool presence; `tech_stack` job-posting signals (OpenAI/Anthropic) predict training data clauses.
+- Methodology, OPP-115 schema, jurisdiction checklists, tracker risk DB, and contradiction patterns: `cybersleuth://privacy-analysis`.
+
 ### LLM / AI Surface Reconnaissance
 - Detect LLM-powered applications via `llm_fingerprint` (passive: headers, CSP, JS bundles, API path probes). No prompts sent — safe by default for any public surface.
 - Confirm chat endpoints with `llm_probe_public_chat` (one benign user-style message). Use only where the target intentionally exposes a chat to anonymous users.
