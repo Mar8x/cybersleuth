@@ -1,0 +1,1065 @@
+"""
+CyberSleuth test battery — three tiers:
+  1. Structural  — imports, __all__, server syntax, doc files on disk
+  2. Pure logic  — regex/classification functions, no network
+  3. Mocked HTTP — full tool functions with requests.get/post mocked
+"""
+import ast
+import datetime
+import json
+import re
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+# Make sure project root is on sys.path
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+
+# ---------------------------------------------------------------------------
+# Tier 1: Structural
+# ---------------------------------------------------------------------------
+
+class TestStructural:
+    def test_tools_syntax(self):
+        src = (ROOT / "tools.py").read_text()
+        ast.parse(src)
+
+    def test_server_syntax(self):
+        src = (ROOT / "server.py").read_text()
+        ast.parse(src)
+
+    def test_all_exports_importable(self):
+        import tools
+        for name in tools.__all__:
+            assert hasattr(tools, name), f"tools.__all__ entry '{name}' not found in module"
+            assert callable(getattr(tools, name)), f"'{name}' is not callable"
+
+    def test_all_count(self):
+        import tools
+        assert len(tools.__all__) >= 21, "Expected at least 21 exports"
+
+    def test_doc_files_exist(self):
+        docs = [
+            "docs/privacy-analysis.md",
+            "docs/llm-recon.md",
+            "docs/tech-stack-recon.md",
+            "docs/domain-workflow.md",
+            "cybersleuth.md",
+            "reports.md",
+            "people-osint.md",
+        ]
+        for doc in docs:
+            assert (ROOT / doc).exists(), f"Missing: {doc}"
+
+    def test_new_tools_in_all(self):
+        import tools
+        for name in ["get_privacy_policy", "scan_trackers",
+                     "find_career_sources", "fetch_job_postings",
+                     "github_org_recon", "tech_stack_profile",
+                     "llm_fingerprint", "llm_probe_public_chat", "llm_security_probe"]:
+            assert name in tools.__all__, f"'{name}' missing from __all__"
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: Pure logic — privacy analysis
+# ---------------------------------------------------------------------------
+
+class TestPrivacyDetectJurisdictions:
+    def setup_method(self):
+        from tools import _detect_jurisdictions
+        self.fn = _detect_jurisdictions
+
+    def test_gdpr_detected(self):
+        text = "We comply with the GDPR. You have the right to access your data."
+        result = self.fn(text)
+        ids = [j["id"] for j in result]
+        assert "gdpr" in ids
+
+    def test_ccpa_detected(self):
+        text = "California residents have rights under CCPA. Do Not Sell or Share."
+        result = self.fn(text)
+        ids = [j["id"] for j in result]
+        assert "ccpa_cpra" in ids
+
+    def test_both_detected(self):
+        text = "GDPR applies to EU users. CCPA applies to California residents."
+        result = self.fn(text)
+        ids = [j["id"] for j in result]
+        assert "gdpr" in ids
+        assert "ccpa_cpra" in ids
+
+    def test_lgpd_detected(self):
+        text = "Nos termos da LGPD (Lei Geral de Proteção de Dados), você tem direitos."
+        result = self.fn(text)
+        ids = [j["id"] for j in result]
+        assert "lgpd" in ids
+
+    def test_none_detected_for_generic_text(self):
+        text = "We use cookies to improve your experience on our website."
+        result = self.fn(text)
+        assert result == []
+
+    def test_result_structure(self):
+        result = self.fn("This policy complies with GDPR.")
+        assert result
+        for j in result:
+            assert "id" in j
+            assert "name" in j
+            assert "regions" in j
+
+
+class TestPracticeCategories:
+    def setup_method(self):
+        from tools import _detect_practice_categories
+        self.fn = _detect_practice_categories
+
+    def test_data_collection_detected(self):
+        text = "We collect your email address and name when you sign up."
+        result = self.fn(text)
+        assert result["data_collection"] is True
+
+    def test_data_sharing_detected(self):
+        text = "We share your data with third-party advertising partners."
+        result = self.fn(text)
+        assert result["data_sharing"] is True
+
+    def test_retention_detected(self):
+        text = "We retain your personal data for 24 months after account closure."
+        result = self.fn(text)
+        assert result["data_retention"] is True
+
+    def test_user_rights_detected(self):
+        text = "You have the right to access, correct, or delete your personal data."
+        result = self.fn(text)
+        assert result["user_access_rights"] is True
+
+    def test_opt_out_detected(self):
+        text = "You can opt-out of marketing emails at any time."
+        result = self.fn(text)
+        assert result["user_choice_control"] is True
+
+    def test_all_categories_present_in_result(self):
+        from tools import _PRACTICE_CATEGORIES
+        result = self.fn("some policy text")
+        for cat in _PRACTICE_CATEGORIES:
+            assert cat in result, f"Category '{cat}' missing from result"
+
+
+class TestAITrainingDetection:
+    def setup_method(self):
+        from tools import _detect_ai_training
+        self.fn = _detect_ai_training
+
+    def test_explicit_training_high(self):
+        text = "We use your data to train our AI models and improve performance."
+        result = self.fn(text)
+        ids = [h["id"] for h in result]
+        assert "explicit_training" in ids
+        high = [h for h in result if h["id"] == "explicit_training"]
+        assert high[0]["severity"] == "HIGH"
+
+    def test_product_improvement_medium(self):
+        text = "We may use aggregate data to improve our products and services."
+        result = self.fn(text)
+        ids = [h["id"] for h in result]
+        assert "product_improvement_catchall" in ids
+        med = [h for h in result if h["id"] == "product_improvement_catchall"]
+        assert med[0]["severity"] == "MEDIUM"
+
+    def test_no_flags_on_clean_text(self):
+        text = "We store your data securely and do not use it beyond the stated purpose."
+        result = self.fn(text)
+        assert result == []
+
+    def test_match_includes_excerpt(self):
+        text = "We use your data to train our AI models for better predictions."
+        result = self.fn(text)
+        assert result
+        assert result[0]["matches"]
+        assert "excerpt" in result[0]["matches"][0]
+
+
+class TestRequiredElements:
+    def setup_method(self):
+        from tools import _check_required_elements
+        self.fn = _check_required_elements
+
+    def test_gdpr_retention_present(self):
+        text = "We retain your data for 12 months after you close your account."
+        result = self.fn(text, "gdpr")
+        assert result.get("retention_periods") is True
+
+    def test_gdpr_dpo_present(self):
+        text = "Our data protection officer can be reached at dpo@example.com."
+        result = self.fn(text, "gdpr")
+        assert result.get("dpo_contact") is True
+
+    def test_gdpr_rights_present(self):
+        text = "You have the right to access, erasure, and portability of your data."
+        result = self.fn(text, "gdpr")
+        assert result.get("data_subject_rights") is True
+
+    def test_gdpr_cross_border_present(self):
+        text = "We transfer data outside the EU using Standard Contractual Clauses."
+        result = self.fn(text, "gdpr")
+        assert result.get("cross_border_transfers") is True
+
+    def test_ccpa_do_not_sell_present(self):
+        text = "California residents may click 'Do Not Sell or Share My Personal Information'."
+        result = self.fn(text, "ccpa_cpra")
+        assert result.get("do_not_sell_or_share_link") is True
+
+    def test_unknown_jurisdiction_returns_empty(self):
+        result = self.fn("some text", "nonexistent_jurisdiction")
+        assert result == {}
+
+    def test_all_gdpr_elements_checked(self):
+        from tools import _JURISDICTION_PATTERNS
+        gdpr = next(j for j in _JURISDICTION_PATTERNS if j["id"] == "gdpr")
+        result = self.fn("some text", "gdpr")
+        for element in gdpr["required"]:
+            assert element in result, f"Element '{element}' not checked"
+
+
+class TestStripHtml:
+    def setup_method(self):
+        from tools import _strip_html
+        self.fn = _strip_html
+
+    def test_basic_tags_stripped(self):
+        assert self.fn("<p>Hello <b>world</b></p>") == "Hello world"
+
+    def test_script_removed(self):
+        result = self.fn("<html><script>alert(1);</script><p>text</p></html>")
+        assert "alert" not in result
+        assert "text" in result
+
+    def test_style_removed(self):
+        result = self.fn("<style>.cls { color: red; }</style><p>content</p>")
+        assert "color" not in result
+        assert "content" in result
+
+    def test_whitespace_normalised(self):
+        result = self.fn("<p>lots   of    spaces</p>")
+        assert "  " not in result
+
+    def test_html_entities_decoded(self):
+        result = self.fn("AT&amp;T &lt;phones&gt;")
+        assert "AT&T" in result
+
+
+class TestTrackerPatterns:
+    def setup_method(self):
+        from tools import _TRACKER_DB
+        self.db = _TRACKER_DB
+
+    def _match_tracker(self, tracker_id: str, text: str) -> bool:
+        entry = next((t for t in self.db if t["id"] == tracker_id), None)
+        assert entry is not None, f"Tracker '{tracker_id}' not in DB"
+        return any(re.search(p, text, re.IGNORECASE) for p in entry["patterns"])
+
+    def test_meta_pixel_fbevents(self):
+        assert self._match_tracker(
+            "meta_pixel",
+            '<script src="https://connect.facebook.net/en_US/fbevents.js"></script>'
+        )
+
+    def test_meta_pixel_fbq(self):
+        assert self._match_tracker("meta_pixel", "fbq('track', 'PageView');")
+
+    def test_ga4_gtag(self):
+        assert self._match_tracker(
+            "ga4",
+            '<script async src="https://www.googletagmanager.com/gtag/js?id=G-ABC12345"></script>'
+        )
+
+    def test_gtm_container(self):
+        assert self._match_tracker(
+            "google_tag_manager",
+            "https://www.googletagmanager.com/gtm.js?id=GTM-XXXX"
+        )
+
+    def test_fingerprint_js(self):
+        assert self._match_tracker(
+            "fingerprint_js",
+            "import FingerprintJS from '@fingerprintjs/fingerprintjs';"
+        )
+
+    def test_hotjar(self):
+        assert self._match_tracker(
+            "hotjar",
+            "https://static.hotjar.com/c/hotjar-1234.js"
+        )
+
+    def test_tiktok_pixel(self):
+        assert self._match_tracker(
+            "tiktok_pixel",
+            "ttq.load('C12345678');"
+        )
+
+    def test_onetrust_consent(self):
+        assert self._match_tracker(
+            "onetrust",
+            "https://cdn.cookielaw.org/consent/abc/OtAutoBlock.js"
+        )
+
+    def test_no_false_positive_on_clean_page(self):
+        html = "<html><body><p>Hello world, welcome to our site.</p></body></html>"
+        for tracker in self.db:
+            matched = any(re.search(p, html, re.IGNORECASE) for p in tracker["patterns"])
+            assert not matched, f"False positive: tracker '{tracker['id']}' matched clean page"
+
+
+class TestContextEscalation:
+    """scan_trackers should escalate risk for high-risk page contexts."""
+
+    def _build_mock_response(self, html: str) -> MagicMock:
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = html
+        resp.url = "https://example.com"
+        return resp
+
+    def test_healthcare_context_escalates_medium_tracker(self):
+        from tools import scan_trackers
+        html = (
+            "We are a hospital serving patients. "
+            "fbq('track', 'PageView');  "  # Meta Pixel HIGH — won't change
+            "<script src='https://static.hotjar.com/c/hotjar-1234.js'></script>"  # Hotjar MEDIUM
+            " health medical hospital"
+        )
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._build_mock_response(html)
+            result = scan_trackers("example.com")
+
+        assert "healthcare" in result["context_flags"]
+        hotjar_entry = next((t for t in result["trackers_detected"] if t["id"] == "hotjar"), None)
+        assert hotjar_entry is not None
+        assert hotjar_entry.get("risk_escalated_to") == "HIGH"
+
+    def test_no_escalation_without_context(self):
+        from tools import scan_trackers
+        html = "<script src='https://static.hotjar.com/c/hotjar-1234.js'></script>"
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._build_mock_response(html)
+            result = scan_trackers("example.com")
+
+        assert result["context_flags"] == []
+        hotjar = next((t for t in result["trackers_detected"] if t["id"] == "hotjar"), None)
+        if hotjar:
+            assert "risk_escalated_to" not in hotjar
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: Pure logic — tech-stack
+# ---------------------------------------------------------------------------
+
+class TestDetectAtsInText:
+    def setup_method(self):
+        from tools import _detect_ats_in_text
+        self.fn = _detect_ats_in_text
+
+    def test_greenhouse_board_url(self):
+        result = self.fn("https://boards.greenhouse.io/stripe")
+        assert result
+        r = result[0]
+        assert r["ats"] == "greenhouse"
+        assert r["handle"] == "stripe"
+        assert r["board_url"] == "https://boards.greenhouse.io/stripe"
+        assert r["has_api"] is True
+
+    def test_lever_url(self):
+        result = self.fn("https://jobs.lever.co/acmecorp")
+        assert result
+        assert result[0]["ats"] == "lever"
+        assert result[0]["handle"] == "acmecorp"
+
+    def test_personio_url(self):
+        result = self.fn("https://mycompany.jobs.personio.de")
+        assert result
+        assert result[0]["ats"] == "personio"
+        assert result[0]["handle"] == "mycompany"
+        assert result[0]["board_url"] == "https://mycompany.jobs.personio.de"
+
+    def test_recruitee_subdomain(self):
+        result = self.fn("https://acmecorp.recruitee.com")
+        assert result
+        assert result[0]["ats"] == "recruitee"
+        assert result[0]["handle"] == "acmecorp"
+
+    def test_platform_subdomain_excluded(self):
+        # 'apply' is in _ATS_PLATFORM_SUBDOMAINS — must not be returned as a handle
+        result = self.fn("https://apply.workable.com")
+        assert all(r["handle"].lower() != "apply" for r in result)
+
+    def test_board_url_in_result(self):
+        result = self.fn("https://jobs.lever.co/acmecorp")
+        assert result[0]["board_url"] == "https://jobs.lever.co/acmecorp"
+
+    def test_no_false_positive_on_generic_url(self):
+        result = self.fn("https://example.com/about/careers")
+        assert result == []
+
+    def test_deduplication(self):
+        # Same ATS handle appearing twice in text should yield one result
+        text = "https://boards.greenhouse.io/stripe jobs at boards.greenhouse.io/stripe"
+        result = self.fn(text)
+        stripe_hits = [r for r in result if r["handle"] == "stripe"]
+        assert len(stripe_hits) == 1
+
+
+class TestFetchJobPostings:
+    """Test fetch_job_postings with unrecognized and no-API ATS URLs."""
+
+    def test_unknown_url_returns_error(self):
+        from tools import fetch_job_postings
+        result = fetch_job_postings("https://example.com/careers/jobs")
+        assert "error" in result
+
+    def test_no_api_ats_returns_error(self):
+        from tools import fetch_job_postings
+        # Teamtailor has no public API
+        result = fetch_job_postings("https://acmecorp.teamtailor.com")
+        assert "error" in result
+        assert result.get("ats") == "teamtailor"
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: Pure logic — LLM recon
+# ---------------------------------------------------------------------------
+
+class TestLlmSecurityProbeGating:
+    def setup_method(self):
+        from tools import llm_security_probe
+        self.fn = llm_security_probe
+
+    def test_refuses_without_authorized_flag(self):
+        result = self.fn("https://example.com", authorized=False,
+                         authorization_note="pentest engagement 123")
+        assert "error" in result
+
+    def test_refuses_without_authorization_note(self):
+        result = self.fn("https://example.com", authorized=True, authorization_note="")
+        assert "error" in result
+
+    def test_refuses_with_whitespace_only_note(self):
+        result = self.fn("https://example.com", authorized=True, authorization_note="   ")
+        assert "error" in result
+
+
+class TestLlmProviderSignals:
+    def setup_method(self):
+        from tools import _LLM_PROVIDER_SIGNALS, _LLM_LEAKED_KEY_PATTERNS
+        self.signals = _LLM_PROVIDER_SIGNALS
+        self.key_patterns = _LLM_LEAKED_KEY_PATTERNS
+
+    def test_openai_key_pattern(self):
+        # Credential patterns live in _LLM_LEAKED_KEY_PATTERNS, keyed by kind
+        openai_kinds = {k: v for k, v in self.key_patterns.items() if "openai" in k}
+        assert openai_kinds, "Should have OpenAI credential patterns in _LLM_LEAKED_KEY_PATTERNS"
+        assert any(re.search(p, "sk-proj-abc123def456ghi789jkl012mno") for p in openai_kinds.values())
+
+    def test_anthropic_key_pattern(self):
+        anthropic_kinds = {k: v for k, v in self.key_patterns.items() if "anthropic" in k}
+        assert anthropic_kinds, "Should have Anthropic credential patterns in _LLM_LEAKED_KEY_PATTERNS"
+        assert any(re.search(p, "sk-ant-api03-" + "A" * 42) for p in anthropic_kinds.values())
+
+    def test_openai_header_pattern(self):
+        # Headers are listed under the 'headers' key in _LLM_PROVIDER_SIGNALS
+        headers = self.signals.get("openai", {}).get("headers", [])
+        assert headers, "OpenAI should have header signals"
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: Pure logic — core regression
+# ---------------------------------------------------------------------------
+
+class TestParseCertDate:
+    def setup_method(self):
+        from tools import _parse_cert_date
+        self.fn = _parse_cert_date
+
+    def test_iso_with_z(self):
+        result = self.fn("2024-01-15T10:30:00Z")
+        assert result is not None
+        assert result.year == 2024
+        assert result.tzinfo is not None
+
+    def test_iso_with_offset(self):
+        result = self.fn("2024-06-01T12:00:00+02:00")
+        assert result is not None
+        assert result.year == 2024
+
+    def test_plain_date(self):
+        result = self.fn("2024-03-20")
+        assert result is not None
+        assert result.year == 2024
+
+    def test_invalid_raises(self):
+        with pytest.raises(ValueError):
+            self.fn("not-a-date")
+
+
+class TestAtsProvidersStructure:
+    def setup_method(self):
+        from tools import _ATS_PROVIDERS
+        self.providers = _ATS_PROVIDERS
+
+    def test_all_providers_have_patterns(self):
+        for name, spec in self.providers.items():
+            assert "patterns" in spec and spec["patterns"], \
+                f"Provider '{name}' missing patterns"
+
+    def test_all_providers_have_board_url_template(self):
+        for name, spec in self.providers.items():
+            assert "board_url_template" in spec and spec["board_url_template"], \
+                f"Provider '{name}' missing board_url_template"
+
+    def test_api_providers_have_list_key(self):
+        for name, spec in self.providers.items():
+            if spec.get("api"):
+                assert "list_key" in spec, f"API provider '{name}' missing list_key"
+
+    def test_platform_subdomains_excluded(self):
+        from tools import _ATS_PLATFORM_SUBDOMAINS, _detect_ats_in_text
+        for subdomain in ["apply", "jobs", "careers", "www", "boards"]:
+            results = _detect_ats_in_text(f"https://{subdomain}.workable.com")
+            handles = [r["handle"].lower() for r in results]
+            assert subdomain not in handles, \
+                f"Platform subdomain '{subdomain}' incorrectly captured as handle"
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Mocked HTTP — privacy tools
+# ---------------------------------------------------------------------------
+
+def _mock_response(text: str, status: int = 200, url: str = "https://example.com") -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.text = text
+    resp.url = url
+    return resp
+
+
+GDPR_POLICY_HTML = """
+<html><body>
+<h1>Privacy Policy</h1>
+<p>Last updated: January 1, 2024</p>
+<p>We comply with the General Data Protection Regulation (GDPR). Our company is the
+data controller. Our data protection officer can be reached at dpo@example.com.</p>
+<p>We collect your name, email address, and usage data. We use this data to provide
+our services under a contractual necessity basis. We also process data under legitimate
+interests for product improvement.</p>
+<p>We retain your personal data for 24 months. We share your data with service providers
+and third-party vendors under data processing agreements.</p>
+<p>You have the right to access, rectify, and erase your personal data. You may also
+request data portability or object to processing. You have the right to withdraw consent
+at any time. You may lodge a complaint with your supervisory authority.</p>
+<p>Where we transfer data outside the EU, we use Standard Contractual Clauses (SCCs).</p>
+</body></html>
+"""
+
+CCPA_POLICY_HTML = """
+<html><body>
+<h1>Privacy Policy</h1>
+<p>California Consumer Privacy Act (CCPA) — California residents have additional rights.</p>
+<p>We collect the following categories of personal information: identifiers, usage data,
+and commercial information.</p>
+<p>We use this data for our business purposes and do not sell personal information.</p>
+<p>Do Not Sell or Share My Personal Information: California residents may submit a request.</p>
+<p>California residents have the right to know, delete, and opt-out.</p>
+</body></html>
+"""
+
+TRACKER_HTML = """
+<html>
+<head>
+<script>
+  !function(f,b,e,v,n,t,s){fbq('init', '123456789012345');}(window,
+  document,'script','https://connect.facebook.net/en_US/fbevents.js');
+  fbq('track', 'PageView');
+</script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-ABCD1234EF"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-ABCD1234EF');
+</script>
+</head>
+<body><p>Hello world</p></body>
+</html>
+"""
+
+AI_TRAINING_HTML = """
+<html><body>
+<h1>Terms of Service</h1>
+<p>By using our service, you agree that we may use your content to train our AI models
+and to improve our products and services. You can opt-out of AI training via Data Controls
+in Account Settings.</p>
+</body></html>
+"""
+
+
+class TestGetPrivacyPolicyMocked:
+    def _make_mock(self, html: str, url: str = "https://example.com/privacy-policy"):
+        resp = _mock_response(html, url=url)
+        return resp
+
+    def test_gdpr_jurisdiction_detected(self):
+        from tools import get_privacy_policy
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(GDPR_POLICY_HTML)
+            result = get_privacy_policy("example.com")
+
+        ids = [j["id"] for j in result["jurisdictions_detected"]]
+        assert "gdpr" in ids
+
+    def test_gdpr_gap_analysis_present(self):
+        from tools import get_privacy_policy
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(GDPR_POLICY_HTML)
+            result = get_privacy_policy("example.com")
+
+        assert "gdpr" in result["compliance_gaps"]
+        gap = result["compliance_gaps"]["gdpr"]
+        assert "present" in gap
+        assert "missing" in gap
+        assert "retention_periods" in gap["present"]
+        assert "dpo_contact" in gap["present"]
+        assert "data_subject_rights" in gap["present"]
+
+    def test_ccpa_jurisdiction_detected(self):
+        from tools import get_privacy_policy
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(CCPA_POLICY_HTML)
+            result = get_privacy_policy("example.com")
+
+        ids = [j["id"] for j in result["jurisdictions_detected"]]
+        assert "ccpa_cpra" in ids
+
+    def test_practice_categories_populated(self):
+        from tools import get_privacy_policy
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(GDPR_POLICY_HTML)
+            result = get_privacy_policy("example.com")
+
+        cats = result["practice_categories"]
+        assert cats.get("data_collection") is True
+        assert cats.get("data_sharing") is True
+        assert cats.get("data_retention") is True
+        assert cats.get("user_access_rights") is True
+
+    def test_ai_training_flags_detected(self):
+        from tools import get_privacy_policy
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(AI_TRAINING_HTML)
+            result = get_privacy_policy("example.com")
+
+        flags = result["ai_training_indicators"]
+        assert any(f["id"] == "explicit_training" for f in flags), \
+            "Should detect explicit AI training clause"
+
+    def test_network_error_returns_empty_gracefully(self):
+        from tools import get_privacy_policy
+        import requests
+        with patch("tools.requests.get", side_effect=requests.exceptions.ConnectionError("offline")):
+            result = get_privacy_policy("example.com")
+
+        assert result["word_count"] == 0
+        assert result["jurisdictions_detected"] == []
+
+    def test_result_keys_present(self):
+        from tools import get_privacy_policy
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(GDPR_POLICY_HTML)
+            result = get_privacy_policy("example.com")
+
+        for key in ["domain", "documents_found", "jurisdictions_detected",
+                    "practice_categories", "ai_training_indicators",
+                    "compliance_gaps", "query_info"]:
+            assert key in result, f"Missing key '{key}'"
+
+    def test_last_updated_extracted(self):
+        from tools import get_privacy_policy
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(GDPR_POLICY_HTML)
+            result = get_privacy_policy("example.com")
+
+        assert result["last_updated"] is not None
+        assert "2024" in result["last_updated"]
+
+
+class TestScanTrackersMocked:
+    def _make_mock(self, html: str) -> MagicMock:
+        return _mock_response(html)
+
+    def test_meta_pixel_detected(self):
+        from tools import scan_trackers
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(TRACKER_HTML)
+            result = scan_trackers("example.com")
+
+        ids = [t["id"] for t in result["trackers_detected"]]
+        assert "meta_pixel" in ids
+
+    def test_ga4_detected(self):
+        from tools import scan_trackers
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(TRACKER_HTML)
+            result = scan_trackers("example.com")
+
+        ids = [t["id"] for t in result["trackers_detected"]]
+        assert "ga4" in ids
+
+    def test_contradiction_hints_fire_for_meta_pixel(self):
+        from tools import scan_trackers
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(TRACKER_HTML)
+            result = scan_trackers("example.com")
+
+        hint_types = [h["type"] for h in result["contradiction_hints"]]
+        assert "do_not_share_contradiction" in hint_types
+
+    def test_ga4_cross_border_hint_fires(self):
+        from tools import scan_trackers
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(TRACKER_HTML)
+            result = scan_trackers("example.com")
+
+        hint_types = [h["type"] for h in result["contradiction_hints"]]
+        assert "cross_border_transfer_contradiction" in hint_types
+
+    def test_onetrust_classified_as_consent_not_tracker(self):
+        from tools import scan_trackers
+        html = '<script src="https://cdn.cookielaw.org/consent/abc/OtAutoBlock.js"></script>'
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(html)
+            result = scan_trackers("example.com")
+
+        consent_ids = [c["id"] for c in result["consent_mechanisms"]]
+        tracker_ids = [t["id"] for t in result["trackers_detected"]]
+        assert "onetrust" in consent_ids
+        assert "onetrust" not in tracker_ids
+
+    def test_hipaa_hint_fires_for_healthcare_meta_pixel(self):
+        from tools import scan_trackers
+        html = (
+            "We serve hospital patients and provide health and medical services. "
+            "fbq('track', 'PageView');"
+        )
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(html)
+            result = scan_trackers("example.com")
+
+        assert "healthcare" in result["context_flags"]
+        pixel_hint = next(
+            (h for h in result["contradiction_hints"] if h.get("type") == "do_not_share_contradiction"),
+            None
+        )
+        assert pixel_hint is not None
+        assert "hipaa_risk" in pixel_hint
+
+    def test_no_consent_banner_hint_when_ads_present(self):
+        from tools import scan_trackers
+        # Only Meta Pixel, no consent banner
+        html = "fbq('track', 'PageView');"
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(html)
+            result = scan_trackers("example.com")
+
+        hint_types = [h["type"] for h in result["contradiction_hints"]]
+        assert "no_consent_mechanism" in hint_types
+
+    def test_clean_page_no_trackers(self):
+        from tools import scan_trackers
+        html = "<html><body><p>Hello world</p></body></html>"
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock(html)
+            result = scan_trackers("example.com")
+
+        assert result["tracker_count"] == 0
+        assert result["contradiction_hints"] == []
+
+    def test_result_keys_present(self):
+        from tools import scan_trackers
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._make_mock("<html></html>")
+            result = scan_trackers("example.com")
+
+        for key in ["domain", "trackers_detected", "consent_mechanisms",
+                    "tracker_count", "by_category", "by_risk",
+                    "contradiction_hints", "context_flags", "query_info"]:
+            assert key in result, f"Missing key '{key}'"
+
+    def test_network_error_returns_gracefully(self):
+        from tools import scan_trackers
+        import requests
+        with patch("tools.requests.get", side_effect=requests.exceptions.ConnectionError):
+            result = scan_trackers("example.com")
+
+        assert result["tracker_count"] == 0
+        assert result["fetch_error"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Mocked HTTP — tech-stack tools
+# ---------------------------------------------------------------------------
+
+GREENHOUSE_API_RESPONSE = {
+    "jobs": [
+        {
+            "title": "Senior Python Engineer",
+            "content": (
+                "We use Python, FastAPI, PostgreSQL, Redis, Kubernetes, "
+                "AWS, Terraform, and Datadog. Experience with React and TypeScript helpful."
+            ),
+            "location": {"name": "Remote"},
+            "updated_at": "2024-01-01T00:00:00Z",
+        },
+        {
+            "title": "Data Engineer",
+            "content": "Must know Python, Kafka, dbt, Snowflake, Airflow, AWS.",
+            "location": {"name": "London"},
+            "updated_at": "2024-01-02T00:00:00Z",
+        },
+    ]
+}
+
+
+class TestFetchJobPostingsMocked:
+    def test_greenhouse_keywords_extracted(self):
+        from tools import fetch_job_postings
+        board_url = "https://boards.greenhouse.io/acmecorp"
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_response(
+                json.dumps(GREENHOUSE_API_RESPONSE),
+                url=f"https://boards-api.greenhouse.io/v1/boards/acmecorp/jobs"
+            )
+            mock_get.return_value.json.return_value = GREENHOUSE_API_RESPONSE
+            mock_get.return_value.raise_for_status = MagicMock()
+            result = fetch_job_postings(board_url)
+
+        assert result.get("ats") == "greenhouse"
+        assert result.get("handle") == "acmecorp"
+        assert result.get("total_jobs") == 2
+        agg = result.get("aggregated_tech_keywords", {})
+        # Python appears in both postings → should be top-ranked
+        all_keywords = [kw for pairs in agg.values() for kw, _ in pairs]
+        assert "python" in all_keywords
+
+    def test_greenhouse_board_url_in_result(self):
+        from tools import fetch_job_postings
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_response("")
+            mock_get.return_value.json.return_value = GREENHOUSE_API_RESPONSE
+            mock_get.return_value.raise_for_status = MagicMock()
+            result = fetch_job_postings("https://boards.greenhouse.io/acmecorp")
+
+        assert result.get("board_url") == "https://boards.greenhouse.io/acmecorp"
+
+    def test_api_error_returns_error_key(self):
+        from tools import fetch_job_postings
+        import requests
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_response("", status=404)
+            mock_get.return_value.raise_for_status.side_effect = \
+                requests.exceptions.HTTPError("404")
+            result = fetch_job_postings("https://boards.greenhouse.io/acmecorp")
+
+        assert "error" in result
+
+
+class TestFindCareerSourcesMocked:
+    def test_greenhouse_redirect_detected(self):
+        from tools import find_career_sources
+        resp = _mock_response(
+            '<a href="https://boards.greenhouse.io/acmecorp">Jobs</a>',
+            url="https://boards.greenhouse.io/acmecorp",
+        )
+        import requests as req_module
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = resp
+            result = find_career_sources("example.com")
+
+        ats_ids = [a["ats"] for a in result["ats_discovered"]]
+        assert "greenhouse" in ats_ids
+
+    def test_result_structure(self):
+        from tools import find_career_sources
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_response("<html></html>")
+            result = find_career_sources("example.com")
+
+        for key in ["domain", "ats_discovered", "live_careers_urls",
+                    "wayback_snapshots", "errors", "query_info"]:
+            assert key in result
+
+    def test_all_http_errors_handled(self):
+        from tools import find_career_sources
+        import requests
+        with patch("tools.requests.get",
+                   side_effect=requests.exceptions.ConnectionError("offline")):
+            result = find_career_sources("example.com")
+
+        assert result["ats_discovered"] == []
+        assert len(result["errors"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Mocked HTTP — LLM tools
+# ---------------------------------------------------------------------------
+
+class TestLlmFingerprintMocked:
+    def _build_resp(self, status=200, headers=None, text="<html></html>", url=None):
+        resp = MagicMock()
+        resp.status_code = status
+        resp.headers = headers or {}
+        resp.text = text
+        resp.url = url or "https://example.com"
+        resp.content = text.encode()
+        return resp
+
+    def test_openai_key_in_js_detected(self):
+        from tools import llm_fingerprint
+        html = """
+        <html><head>
+        <script>const OPENAI_KEY = "sk-proj-abc123def456ghi789jkl";</script>
+        </head><body></body></html>
+        """
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._build_resp(text=html)
+            result = llm_fingerprint("https://example.com")
+
+        assert result.get("leaked_credentials"), "Should detect leaked OpenAI key"
+        # credential items have a 'kind' key (e.g. 'openai_project'), not 'provider'
+        assert any("openai" in c["kind"]
+                   for c in result.get("leaked_credentials", []))
+
+    def test_result_keys_present(self):
+        from tools import llm_fingerprint
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = self._build_resp()
+            result = llm_fingerprint("https://example.com")
+
+        for key in ["url", "providers", "frameworks",
+                    "leaked_credentials", "owasp_findings", "query_info"]:
+            assert key in result, f"Missing key '{key}'"
+
+    def test_network_error_returns_gracefully(self):
+        from tools import llm_fingerprint
+        import requests
+        with patch("tools.requests.get",
+                   side_effect=requests.exceptions.ConnectionError):
+            result = llm_fingerprint("https://example.com")
+
+        assert "error" in result or "providers" in result
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Mocked HTTP — core regression
+# ---------------------------------------------------------------------------
+
+SECURITY_TXT_CONTENT = """Contact: mailto:security@example.com
+Contact: https://example.com/security
+Expires: 2027-01-01T00:00:00Z
+Encryption: https://example.com/pgp.txt
+Policy: https://example.com/security-policy
+Preferred-Languages: en, de
+"""
+
+
+class TestSecurityTxtRegression:
+    def test_contact_parsed(self):
+        from tools import get_security_txt
+        resp = _mock_response(SECURITY_TXT_CONTENT,
+                              url="https://example.com/.well-known/security.txt")
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = resp
+            result = get_security_txt("example.com")
+
+        assert result.get("found") is True
+        # contacts are nested under result['fields']['contact']
+        contacts = result.get("fields", {}).get("contact", [])
+        assert any("security@example.com" in c for c in contacts)
+
+    def test_policy_parsed(self):
+        from tools import get_security_txt
+        resp = _mock_response(SECURITY_TXT_CONTENT,
+                              url="https://example.com/.well-known/security.txt")
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = resp
+            result = get_security_txt("example.com")
+
+        # policy is a list nested under result['fields']['policy']
+        policy_list = result.get("fields", {}).get("policy", [])
+        assert "https://example.com/security-policy" in policy_list
+
+    def test_not_expired_for_future_date(self):
+        from tools import get_security_txt
+        resp = _mock_response(SECURITY_TXT_CONTENT,
+                              url="https://example.com/.well-known/security.txt")
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = resp
+            result = get_security_txt("example.com")
+
+        assert result.get("is_expired") is False
+
+    def test_404_returns_not_found(self):
+        from tools import get_security_txt
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_response("", status=404)
+            result = get_security_txt("example.com")
+
+        assert result.get("found") is False
+
+
+CERTSPOTTER_RESPONSE = [
+    {
+        "id": "12345",
+        "tbs_sha256": "abc123",
+        "dns_names": ["example.com", "www.example.com", "api.example.com"],
+        "not_before": "2024-01-01T00:00:00Z",
+        "not_after": "2025-01-01T00:00:00Z",
+        "revoked": False,
+        "cert_sha256": "def456",
+    }
+]
+
+
+class TestCertificateInfoRegression:
+    def test_certspotter_domains_returned(self):
+        from tools import get_certificate_info
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_response(
+                json.dumps(CERTSPOTTER_RESPONSE)
+            )
+            mock_get.return_value.json.return_value = CERTSPOTTER_RESPONSE
+            # include_expired=True because the fixture cert expired 2025-01-01
+            result = get_certificate_info("example.com", include_expired=True)
+
+        assert "certificates" in result or "error" in result
+        if "certificates" in result:
+            certs = result["certificates"]
+            assert len(certs) >= 1
+            # domains are in c['domains'], not c['dns_names']
+            all_domains = [d for c in certs for d in c.get("domains", [])]
+            assert "example.com" in all_domains
+
+    def test_result_has_sources_used(self):
+        from tools import get_certificate_info
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_response(
+                json.dumps(CERTSPOTTER_RESPONSE)
+            )
+            mock_get.return_value.json.return_value = CERTSPOTTER_RESPONSE
+            result = get_certificate_info("example.com", include_expired=True)
+
+        if "certificates" in result:
+            # sources_used is nested inside query_info
+            assert "sources_used" in result.get("query_info", {})
