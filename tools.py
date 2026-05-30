@@ -22,6 +22,22 @@ from bs4 import BeautifulSoup
 _UTC = datetime.timezone.utc
 
 
+def _make_telemetry(
+    started: datetime.datetime,
+    errors: Optional[List[str]] = None,
+    quality: Optional[float] = None,
+) -> Dict:
+    elapsed_ms = int((datetime.datetime.now(_UTC) - started).total_seconds() * 1000)
+    errs = [e for e in (errors or []) if e]
+    if quality is None:
+        quality = 0.0 if errs else 1.0
+    return {
+        'duration_ms': elapsed_ms,
+        'errors': errs,
+        'quality': round(max(0.0, min(1.0, quality)), 2),
+    }
+
+
 def _parse_cert_date(s: str) -> datetime.datetime:
     """Parse a certificate date string to a UTC-aware datetime."""
     s = s.strip().split('[')[0].strip()
@@ -96,6 +112,7 @@ def get_certificate_info(domain: str, include_expired: bool = False, wildcard: b
         Dict: Certificate information and analysis
     """
     now = datetime.datetime.now(_UTC)
+    started = now
     errors: Dict = {}
     sources_used: List[str] = []
 
@@ -127,7 +144,8 @@ def get_certificate_info(domain: str, include_expired: bool = False, wildcard: b
                 'include_expired': include_expired,
                 'wildcard_search': wildcard,
                 'timestamp': now.isoformat(),
-            }
+            },
+            '_telemetry': _make_telemetry(started, errors=['All certificate sources failed'], quality=0.0),
         }
 
     processed_certs: List[Dict] = []
@@ -269,7 +287,8 @@ def get_certificate_info(domain: str, include_expired: bool = False, wildcard: b
             'sources_used': sources_used,
             'source_errors': errors,
             'timestamp': now.isoformat(),
-        }
+        },
+        '_telemetry': _make_telemetry(started, errors=list(errors.values()), quality=1.0 if not errors else 0.5),
     }
 
 
@@ -286,6 +305,7 @@ def get_security_txt(domain: str) -> Dict:
     Returns:
         Dict with found status, parsed RFC 9116 fields, expiry check, and raw content
     """
+    started = datetime.datetime.now(_UTC)
     _MULTI_VALUE = {'contact', 'acknowledgments', 'encryption', 'hiring', 'policy', 'canonical'}
     candidates = [
         f'https://{domain}/.well-known/security.txt',
@@ -320,6 +340,7 @@ def get_security_txt(domain: str) -> Dict:
             'domain': domain,
             'error': last_error or 'security.txt not found at standard locations',
             'urls_tried': candidates,
+            '_telemetry': _make_telemetry(started, errors=[last_error or 'not found'], quality=0.5),
         }
 
     # Parse RFC 9116 fields
@@ -365,6 +386,7 @@ def get_security_txt(domain: str) -> Dict:
         'is_expired': is_expired,
         'comments': comments,
         'raw': content,
+        '_telemetry': _make_telemetry(started, quality=1.0),
     }
 
 
@@ -493,6 +515,7 @@ def get_whois_info(domain: str, server: Optional[str] = None) -> Dict:
     Returns:
         Dict: WHOIS information (structured). On error, includes an "error" key and optional "hint".
     """
+    started = datetime.datetime.now(_UTC)
     query = domain.strip()
     try:
         is_ip = False
@@ -512,6 +535,7 @@ def get_whois_info(domain: str, server: Optional[str] = None) -> Dict:
                 "raw": raw,
                 "server_used": server,
                 "query_type": "custom_server",
+                '_telemetry': _make_telemetry(started, quality=1.0),
             }
             return result
 
@@ -526,11 +550,13 @@ def get_whois_info(domain: str, server: Optional[str] = None) -> Dict:
                     "raw": raw,
                     "server_used": rir_server,
                     "query_type": "rir",
+                    '_telemetry': _make_telemetry(started, quality=1.0),
                 }
                 return result
             return {
                 "error": f"WHOIS query failed for IP {query}",
                 "hint": "Try specifying server= (e.g. whois.ripe.net, whois.arin.net) for your region.",
+                '_telemetry': _make_telemetry(started, errors=[f"WHOIS query failed for IP {query}"], quality=0.0),
             }
 
         # Domain: try python-whois first
@@ -562,6 +588,7 @@ def get_whois_info(domain: str, server: Optional[str] = None) -> Dict:
                         clean_result[key] = [str(v) for v in value if v is not None]
                     else:
                         clean_result[key] = str(value)
+            clean_result['_telemetry'] = _make_telemetry(started, quality=1.0)
             return clean_result
         except Exception:
             pass
@@ -577,20 +604,23 @@ def get_whois_info(domain: str, server: Optional[str] = None) -> Dict:
                 "raw": raw,
                 "server_used": tld_server,
                 "query_type": "tld",
+                '_telemetry': _make_telemetry(started, quality=1.0),
             }
 
         return {
             "error": f"WHOIS query failed for {query}",
             "hint": f"Consider specifying server= for this TLD (e.g. whois.ripe.net for EU, whois.arin.net for Americas).",
+            '_telemetry': _make_telemetry(started, errors=[f"WHOIS query failed for {query}"], quality=0.0),
         }
 
     except socket.timeout:
-        return {"error": "WHOIS query timed out", "hint": "Try again or specify server= for your region."}
+        return {"error": "WHOIS query timed out", "hint": "Try again or specify server= for your region.", '_telemetry': _make_telemetry(started, errors=["WHOIS query timed out"], quality=0.0)}
     except Exception as e:
         err = str(e)
         out = {"error": f"WHOIS query failed: {err}"}
         if "connection" in err.lower() or "timed out" in err.lower():
             out["hint"] = "Try specifying server= (e.g. whois.ripe.net, whois.arin.net) for your region."
+        out['_telemetry'] = _make_telemetry(started, errors=[f"WHOIS query failed: {err}"], quality=0.0)
         return out
 
 
@@ -606,6 +636,7 @@ def get_dns_records(domain: str, record_types: Optional[List[str]] = None) -> Di
     Returns:
         Dict: DNS records by type
     """
+    started = datetime.datetime.now(_UTC)
     if record_types is None:
         record_types = ['A', 'AAAA', 'MX', 'NS',
                         'TXT', 'SOA', 'CNAME', 'PTR', 'SRV', 'CAA']
@@ -650,14 +681,15 @@ def get_dns_records(domain: str, record_types: Optional[List[str]] = None) -> Di
             except dns.resolver.NoAnswer:
                 continue
             except dns.resolver.NXDOMAIN:
-                return {"error": f"Domain {domain} does not exist"}
+                return {"error": f"Domain {domain} does not exist", '_telemetry': _make_telemetry(started, errors=[f"Domain {domain} does not exist"], quality=0.0)}
             except Exception as e:
                 results[record_type] = f"Error: {str(e)}"
 
+        results['_telemetry'] = _make_telemetry(started, quality=1.0)
         return results
 
     except Exception as e:
-        return {"error": f"DNS query failed: {str(e)}"}
+        return {"error": f"DNS query failed: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"DNS query failed: {str(e)}"], quality=0.0)}
 
 
 def reverse_dns_lookup(ip: str) -> Dict:
@@ -670,6 +702,7 @@ def reverse_dns_lookup(ip: str) -> Dict:
     Returns:
         Dict: Reverse DNS information
     """
+    started = datetime.datetime.now(_UTC)
     try:
         # Validate IP address
         ipaddress.ip_address(ip)
@@ -685,20 +718,22 @@ def reverse_dns_lookup(ip: str) -> Dict:
             return {
                 "ip": ip,
                 "hostnames": [str(answer) for answer in answers],
-                "ptr_record": str(addr)
+                "ptr_record": str(addr),
+                '_telemetry': _make_telemetry(started, quality=1.0),
             }
 
         except dns.resolver.NXDOMAIN:
             return {
                 "ip": ip,
                 "error": "No reverse DNS record found",
-                "ptr_record": str(addr)
+                "ptr_record": str(addr),
+                '_telemetry': _make_telemetry(started, errors=["No reverse DNS record found"], quality=0.5),
             }
 
     except ValueError:
-        return {"error": f"Invalid IP address: {ip}"}
+        return {"error": f"Invalid IP address: {ip}", '_telemetry': _make_telemetry(started, errors=[f"Invalid IP address: {ip}"], quality=0.0)}
     except Exception as e:
-        return {"error": f"Reverse DNS lookup failed: {str(e)}"}
+        return {"error": f"Reverse DNS lookup failed: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Reverse DNS lookup failed: {str(e)}"], quality=0.0)}
 
 
 # Known hosting/cloud provider names (substring match, case-insensitive) for AS classification.
@@ -729,6 +764,7 @@ def get_as_intelligence(domain_or_ip: str) -> Dict:
         Dict: asn, as_org, country, is_hosting, is_cloud, provider_hint (optional),
               and a note when not hosting that the AS may be the real org.
     """
+    started = datetime.datetime.now(_UTC)
     ip = None
     domain_queried = None
     try:
@@ -754,6 +790,7 @@ def get_as_intelligence(domain_or_ip: str) -> Dict:
             return {
                 "error": f"Could not resolve domain to an IP: {domain_queried}",
                 "query": domain_queried,
+                '_telemetry': _make_telemetry(started, errors=[f"Could not resolve domain to an IP: {domain_queried}"], quality=0.0),
             }
 
     try:
@@ -768,6 +805,7 @@ def get_as_intelligence(domain_or_ip: str) -> Dict:
                 "error": data.get("message", "ip-api lookup failed"),
                 "ip": ip,
                 "query": domain_queried or ip,
+                '_telemetry': _make_telemetry(started, errors=[data.get("message", "ip-api lookup failed")], quality=0.0),
             }
         as_str = data.get("as") or ""
         asname = (data.get("asname") or "").strip()
@@ -801,18 +839,21 @@ def get_as_intelligence(domain_or_ip: str) -> Dict:
             out["provider_hint"] = provider_hint
         if not is_hosting and (org or asname):
             out["note"] = "AS is not a known hosting/cloud provider; AS org may be the actual organization (enterprise or ISP)."
+        out['_telemetry'] = _make_telemetry(started, quality=1.0)
         return out
     except requests.exceptions.RequestException as e:
         return {
             "error": f"AS lookup failed: {str(e)}",
             "ip": ip,
             "query": domain_queried or ip,
+            '_telemetry': _make_telemetry(started, errors=[f"AS lookup failed: {str(e)}"], quality=0.0),
         }
     except (ValueError, KeyError) as e:
         return {
             "error": f"AS lookup response error: {str(e)}",
             "ip": ip,
             "query": domain_queried or ip,
+            '_telemetry': _make_telemetry(started, errors=[f"AS lookup response error: {str(e)}"], quality=0.0),
         }
 
 
@@ -981,10 +1022,11 @@ def get_favicon_hash(url: str, verify_ssl: bool = True) -> Dict:
     Returns:
         Dict: Favicon information including hashes
     """
+    started = datetime.datetime.now(_UTC)
     try:
         favicons = find_favicons(url, verify_ssl)
         if not favicons:
-            return {"error": "No favicons found"}
+            return {"error": "No favicons found", '_telemetry': _make_telemetry(started, errors=["No favicons found"], quality=0.0)}
 
         results = []
         for favicon in favicons:
@@ -1007,11 +1049,12 @@ def get_favicon_hash(url: str, verify_ssl: bool = True) -> Dict:
 
         return {
             "favicons": results,
-            "total_found": len(results)
+            "total_found": len(results),
+            '_telemetry': _make_telemetry(started, quality=1.0),
         }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), '_telemetry': _make_telemetry(started, errors=[str(e)], quality=0.0)}
 
 
 def search_shodan(api_key: str, query: str, limit: int = 5) -> Dict:
@@ -1026,6 +1069,7 @@ def search_shodan(api_key: str, query: str, limit: int = 5) -> Dict:
     Returns:
         Dict: Search results with stats and matches
     """
+    started = datetime.datetime.now(_UTC)
     try:
         api = shodan.Shodan(api_key)
         results = api.search(query)
@@ -1069,12 +1113,13 @@ def search_shodan(api_key: str, query: str, limit: int = 5) -> Dict:
                 "countries": countries.most_common(5),
                 "organizations": organizations.most_common(5),
                 "ports": ports.most_common(5)
-            }
+            },
+            '_telemetry': _make_telemetry(started, quality=1.0),
         }
     except shodan.APIError as e:
-        return {"error": f"Shodan API error: {str(e)}"}
+        return {"error": f"Shodan API error: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Shodan API error: {str(e)}"], quality=0.0)}
     except Exception as e:
-        return {"error": f"Error during Shodan search: {str(e)}"}
+        return {"error": f"Error during Shodan search: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Error during Shodan search: {str(e)}"], quality=0.0)}
 
 
 def search_urlscan_history(url: str, api_key: str, limit: int = 10) -> Dict:
@@ -1086,6 +1131,7 @@ def search_urlscan_history(url: str, api_key: str, limit: int = 10) -> Dict:
         api_key (str): URLScan.io API key
         limit (int): Maximum results to return
     """
+    started = datetime.datetime.now(_UTC)
     headers = {'API-Key': api_key}
 
     try:
@@ -1094,7 +1140,7 @@ def search_urlscan_history(url: str, api_key: str, limit: int = 10) -> Dict:
         results = response.json()
 
         if not results.get('results'):
-            return {"message": "No scans found"}
+            return {"message": "No scans found", '_telemetry': _make_telemetry(started, quality=0.5)}
 
         return {
             "total_found": results.get('total', 0),
@@ -1103,11 +1149,12 @@ def search_urlscan_history(url: str, api_key: str, limit: int = 10) -> Dict:
                 "url": f"https://urlscan.io/result/{result.get('_id')}/",
                 "screenshot": f"https://urlscan.io/screenshots/{result.get('_id')}.png",
                 "malicious": result.get('verdicts', {}).get('overall', {}).get('malicious', False)
-            } for result in results.get('results', [])]
+            } for result in results.get('results', [])],
+            '_telemetry': _make_telemetry(started, quality=1.0),
         }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), '_telemetry': _make_telemetry(started, errors=[str(e)], quality=0.0)}
 
 
 def scan_url(url: str, api_key: str) -> Dict:
@@ -1118,6 +1165,7 @@ def scan_url(url: str, api_key: str) -> Dict:
         url (str): URL to scan
         api_key (str): URLScan.io API key
     """
+    started = datetime.datetime.now(_UTC)
     headers = {
         'API-Key': api_key,
         'Content-Type': 'application/json'
@@ -1132,7 +1180,7 @@ def scan_url(url: str, api_key: str) -> Dict:
         )
 
         if submit.status_code != 200:
-            return {"error": "Scan submission failed"}
+            return {"error": "Scan submission failed", '_telemetry': _make_telemetry(started, errors=["Scan submission failed"], quality=0.0)}
 
         scan_uuid = submit.json().get('uuid')
         print(f"Scan submitted. UUID: {scan_uuid}")
@@ -1152,13 +1200,14 @@ def scan_url(url: str, api_key: str) -> Dict:
                     "server": data.get('page', {}).get('server'),
                     "malicious": data.get('verdicts', {}).get('overall', {}).get('malicious', False),
                     "report_url": f"https://urlscan.io/result/{scan_uuid}/",
-                    "screenshot": f"https://urlscan.io/screenshots/{scan_uuid}.png"
+                    "screenshot": f"https://urlscan.io/screenshots/{scan_uuid}.png",
+                    '_telemetry': _make_telemetry(started, quality=1.0),
                 }
 
-        return {"error": "Scan timeout"}
+        return {"error": "Scan timeout", '_telemetry': _make_telemetry(started, errors=["Scan timeout"], quality=0.0)}
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), '_telemetry': _make_telemetry(started, errors=[str(e)], quality=0.0)}
 
 
 def get_builtwith_free(domain: str, api_key: Optional[str] = None) -> Dict:
@@ -1179,10 +1228,12 @@ def get_builtwith_free(domain: str, api_key: Optional[str] = None) -> Dict:
         Dict: Parsed result with domain, first_seen, last_seen, and groups
             (name, live, dead, latest, oldest, categories), or error message.
     """
+    started = datetime.datetime.now(_UTC)
     if not api_key or not api_key.strip():
         return {
             "error": "BUILTWITH_API_KEY is not set. Get a free key at https://builtwith.com/signup and set the environment variable, or use https://builtwith.com/<domain> manually.",
-            "query_info": {"domain": domain}
+            "query_info": {"domain": domain},
+            '_telemetry': _make_telemetry(started, errors=["BUILTWITH_API_KEY is not set"], quality=0.0),
         }
 
     # Normalize: strip protocol and path, lowercase
@@ -1201,19 +1252,22 @@ def get_builtwith_free(domain: str, api_key: Optional[str] = None) -> Dict:
         if response.status_code == 429:
             return {
                 "error": "BuiltWith rate limit exceeded (1 request per second). Retry later.",
-                "query_info": {"domain": domain}
+                "query_info": {"domain": domain},
+                '_telemetry': _make_telemetry(started, errors=["BuiltWith rate limit exceeded"], quality=0.0),
             }
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.RequestException as e:
         return {
             "error": f"BuiltWith request failed: {str(e)}",
-            "query_info": {"domain": domain}
+            "query_info": {"domain": domain},
+            '_telemetry': _make_telemetry(started, errors=[f"BuiltWith request failed: {str(e)}"], quality=0.0),
         }
     except ValueError as e:
         return {
             "error": f"BuiltWith invalid response: {str(e)}",
-            "query_info": {"domain": domain}
+            "query_info": {"domain": domain},
+            '_telemetry': _make_telemetry(started, errors=[f"BuiltWith invalid response: {str(e)}"], quality=0.0),
         }
 
     # Free API response: result with domain, first, last (epoch), groups[]
@@ -1224,7 +1278,8 @@ def get_builtwith_free(domain: str, api_key: Optional[str] = None) -> Dict:
             err_msg = err_msg[0] if err_msg else "Unknown BuiltWith error"
         return {
             "error": str(err_msg),
-            "query_info": {"domain": domain}
+            "query_info": {"domain": domain},
+            '_telemetry': _make_telemetry(started, errors=[str(err_msg)], quality=0.0),
         }
 
     domain_out = result.get("Domain") or result.get("domain") or domain
@@ -1272,7 +1327,8 @@ def get_builtwith_free(domain: str, api_key: Optional[str] = None) -> Dict:
         "query_info": {
             "domain": domain,
             "timestamp": datetime.datetime.now().isoformat()
-        }
+        },
+        '_telemetry': _make_telemetry(started, quality=1.0),
     }
 
 
@@ -1291,8 +1347,9 @@ def get_vt_domain_report(domain: str, api_key: str) -> Dict:
         Dict: last_analysis_stats (malicious, suspicious, harmless, undetected),
               reputation if present, categories; or error message.
     """
+    started = datetime.datetime.now(_UTC)
     if not api_key or not api_key.strip():
-        return {"error": "VIRUSTOTAL_API_KEY is not set"}
+        return {"error": "VIRUSTOTAL_API_KEY is not set", '_telemetry': _make_telemetry(started, errors=["VIRUSTOTAL_API_KEY is not set"], quality=0.0)}
     domain = domain.strip().lower()
     if "://" in domain:
         domain = domain.split("://", 1)[1]
@@ -1300,15 +1357,15 @@ def get_vt_domain_report(domain: str, api_key: str) -> Dict:
     if domain.startswith("www."):
         domain = domain[4:]
     if not domain or "." not in domain:
-        return {"error": f"Invalid domain: {domain!r}"}
+        return {"error": f"Invalid domain: {domain!r}", '_telemetry': _make_telemetry(started, errors=[f"Invalid domain: {domain!r}"], quality=0.0)}
     url = f"{_VT_BASE}/domains/{domain}"
     headers = {"x-apikey": api_key.strip()}
     try:
         r = requests.get(url, headers=headers, timeout=30)
         if r.status_code == 401 or r.status_code == 403:
-            return {"error": "Invalid or missing VirusTotal API key"}
+            return {"error": "Invalid or missing VirusTotal API key", '_telemetry': _make_telemetry(started, errors=["Invalid or missing VirusTotal API key"], quality=0.0)}
         if r.status_code == 404:
-            return {"message": "No VirusTotal report found for this domain", "domain": domain}
+            return {"message": "No VirusTotal report found for this domain", "domain": domain, '_telemetry': _make_telemetry(started, quality=0.5)}
         r.raise_for_status()
         data = r.json()
         attrs = data.get("data", {}).get("attributes", {})
@@ -1324,11 +1381,12 @@ def get_vt_domain_report(domain: str, api_key: str) -> Dict:
             out["last_analysis_date"] = datetime.datetime.utcfromtimestamp(
                 attrs["last_analysis_date"]
             ).isoformat() + "Z"
+        out['_telemetry'] = _make_telemetry(started, quality=1.0)
         return out
     except requests.exceptions.RequestException as e:
-        return {"error": f"VirusTotal request failed: {str(e)}", "domain": domain}
+        return {"error": f"VirusTotal request failed: {str(e)}", "domain": domain, '_telemetry': _make_telemetry(started, errors=[f"VirusTotal request failed: {str(e)}"], quality=0.0)}
     except (ValueError, KeyError) as e:
-        return {"error": f"VirusTotal response error: {str(e)}", "domain": domain}
+        return {"error": f"VirusTotal response error: {str(e)}", "domain": domain, '_telemetry': _make_telemetry(started, errors=[f"VirusTotal response error: {str(e)}"], quality=0.0)}
 
 
 def get_vt_ip_report(ip: str, api_key: str) -> Dict:
@@ -1342,21 +1400,22 @@ def get_vt_ip_report(ip: str, api_key: str) -> Dict:
     Returns:
         Dict: last_analysis_stats, reputation, network/country if present; or error.
     """
+    started = datetime.datetime.now(_UTC)
     if not api_key or not api_key.strip():
-        return {"error": "VIRUSTOTAL_API_KEY is not set"}
+        return {"error": "VIRUSTOTAL_API_KEY is not set", '_telemetry': _make_telemetry(started, errors=["VIRUSTOTAL_API_KEY is not set"], quality=0.0)}
     ip = ip.strip()
     try:
         ipaddress.ip_address(ip)
     except ValueError:
-        return {"error": f"Invalid IP address: {ip!r}"}
+        return {"error": f"Invalid IP address: {ip!r}", '_telemetry': _make_telemetry(started, errors=[f"Invalid IP address: {ip!r}"], quality=0.0)}
     url = f"{_VT_BASE}/ip_addresses/{ip}"
     headers = {"x-apikey": api_key.strip()}
     try:
         r = requests.get(url, headers=headers, timeout=30)
         if r.status_code == 401 or r.status_code == 403:
-            return {"error": "Invalid or missing VirusTotal API key"}
+            return {"error": "Invalid or missing VirusTotal API key", '_telemetry': _make_telemetry(started, errors=["Invalid or missing VirusTotal API key"], quality=0.0)}
         if r.status_code == 404:
-            return {"message": "No VirusTotal report found for this IP", "ip": ip}
+            return {"message": "No VirusTotal report found for this IP", "ip": ip, '_telemetry': _make_telemetry(started, quality=0.5)}
         r.raise_for_status()
         data = r.json()
         attrs = data.get("data", {}).get("attributes", {})
@@ -1373,11 +1432,12 @@ def get_vt_ip_report(ip: str, api_key: str) -> Dict:
             out["last_analysis_date"] = datetime.datetime.utcfromtimestamp(
                 attrs["last_analysis_date"]
             ).isoformat() + "Z"
+        out['_telemetry'] = _make_telemetry(started, quality=1.0)
         return out
     except requests.exceptions.RequestException as e:
-        return {"error": f"VirusTotal request failed: {str(e)}", "ip": ip}
+        return {"error": f"VirusTotal request failed: {str(e)}", "ip": ip, '_telemetry': _make_telemetry(started, errors=[f"VirusTotal request failed: {str(e)}"], quality=0.0)}
     except (ValueError, KeyError) as e:
-        return {"error": f"VirusTotal response error: {str(e)}", "ip": ip}
+        return {"error": f"VirusTotal response error: {str(e)}", "ip": ip, '_telemetry': _make_telemetry(started, errors=[f"VirusTotal response error: {str(e)}"], quality=0.0)}
 
 
 # ---------------------------------------------------------------------------
@@ -1712,6 +1772,7 @@ def find_career_sources(domain: str) -> Dict:
         Dict with discovered ATS handles, live careers URLs, Wayback fallback
         results, and the ATS meta-signal (region/stage inference).
     """
+    started = datetime.datetime.now(_UTC)
     base = domain.rstrip('/')
     if not base.startswith('http'):
         base = f'https://{base}'
@@ -1763,6 +1824,7 @@ def find_career_sources(domain: str) -> Dict:
         'wayback_snapshots': wayback,
         'errors': errors,
         'query_info': {'timestamp': datetime.datetime.now(_UTC).isoformat()},
+        '_telemetry': _make_telemetry(started, errors=errors, quality=1.0 if not errors else 0.5),
     }
 
 
@@ -1789,6 +1851,7 @@ def fetch_job_postings(board_url: str, max_jobs: int = 50) -> Dict:
         Dict with job list, aggregated tech keywords across all postings,
         and per-category frequency counts.
     """
+    started = datetime.datetime.now(_UTC)
     hits = _detect_ats_in_text(board_url)
     if not hits:
         return {
@@ -1797,6 +1860,7 @@ def fetch_job_postings(board_url: str, max_jobs: int = 50) -> Dict:
                 'Pass the board_url value returned by career_sources().'
             ),
             'board_url': board_url,
+            '_telemetry': _make_telemetry(started, errors=[f'Could not identify ATS platform from URL: {board_url!r}'], quality=0.0),
         }
 
     match = hits[0]
@@ -1813,6 +1877,7 @@ def fetch_job_postings(board_url: str, max_jobs: int = 50) -> Dict:
             'ats': ats_type,
             'handle': handle,
             'board_url': board_url,
+            '_telemetry': _make_telemetry(started, errors=[f'{ats_type} does not expose a public JSON API'], quality=0.0),
         }
 
     api_url = spec['api'].replace('{handle}', handle)
@@ -1826,10 +1891,10 @@ def fetch_job_postings(board_url: str, max_jobs: int = 50) -> Dict:
         data = resp.json()
     except requests.exceptions.RequestException as e:
         return {'error': f'Request failed: {str(e)}', 'ats': ats_type, 'handle': handle,
-                'board_url': board_url}
+                'board_url': board_url, '_telemetry': _make_telemetry(started, errors=[f'Request failed: {str(e)}'], quality=0.0)}
     except ValueError as e:
         return {'error': f'JSON parse error: {str(e)}', 'ats': ats_type, 'handle': handle,
-                'board_url': board_url}
+                'board_url': board_url, '_telemetry': _make_telemetry(started, errors=[f'JSON parse error: {str(e)}'], quality=0.0)}
 
     list_key = spec.get('list_key')
     raw_jobs = data.get(list_key, data) if list_key else data
@@ -1859,6 +1924,7 @@ def fetch_job_postings(board_url: str, max_jobs: int = 50) -> Dict:
         'jobs': jobs,
         'aggregated_tech_keywords': aggregated,
         'query_info': {'timestamp': datetime.datetime.now(_UTC).isoformat()},
+        '_telemetry': _make_telemetry(started, quality=1.0),
     }
 
 
@@ -1982,6 +2048,7 @@ def github_org_recon(org: str, max_repos: int = 20) -> Dict:
         Dict with org metadata, repo list, language stats, dependency
         keywords, CI tooling signals, and aggregated tech keywords.
     """
+    started = datetime.datetime.now(_UTC)
     # Org metadata
     org_data = _gh_get(f'https://api.github.com/orgs/{org}')
     if org_data is None:
@@ -2118,6 +2185,7 @@ def github_org_recon(org: str, max_repos: int = 20) -> Dict:
             'github_token_used': bool(os.environ.get('GITHUB_TOKEN')),
             'timestamp': datetime.datetime.now(_UTC).isoformat(),
         },
+        '_telemetry': _make_telemetry(started, quality=1.0),
     }
 
 
@@ -2147,6 +2215,7 @@ def tech_stack_profile(domain: str, github_org: Optional[str] = None) -> Dict:
         Unified tech-stack profile with keywords by category, source
         attribution, ATS metadata, and confidence notes.
     """
+    started = datetime.datetime.now(_UTC)
     profile: Dict = {
         'domain': domain,
         'github_org': github_org,
@@ -2236,6 +2305,7 @@ def tech_stack_profile(domain: str, github_org: Optional[str] = None) -> Dict:
             key=lambda x: -x['count'],
         )
 
+    profile['_telemetry'] = _make_telemetry(started, errors=profile['errors'], quality=1.0 if not profile['errors'] else 0.5)
     return profile
 
 
@@ -2557,7 +2627,7 @@ def llm_fingerprint(url: str) -> Dict:
             headers={'User-Agent': 'CyberSleuth/1.0'},
         )
     except requests.exceptions.RequestException as e:
-        return {'error': f'Failed to fetch target: {str(e)}', 'url': url}
+        return {'error': f'Failed to fetch target: {str(e)}', 'url': url, '_telemetry': _make_telemetry(started, errors=[f'Failed to fetch target: {str(e)}'], quality=0.0)}
 
     aggregate: Dict = {
         'providers': {},
@@ -2645,6 +2715,7 @@ def llm_fingerprint(url: str) -> Dict:
             'timestamp': started.isoformat(),
             'scope': 'passive',
         },
+        '_telemetry': _make_telemetry(started, quality=1.0),
     }
 
 
@@ -2705,6 +2776,7 @@ def llm_probe_public_chat(url: str, query: str = "Hello") -> Dict:
         First reachable chat endpoint with response details, plus any model
         name or system-prompt leakage observed.
     """
+    started = datetime.datetime.now(_UTC)
     attempts: List[Dict] = []
     chosen: Optional[Dict] = None
     shapes = [
@@ -2762,6 +2834,7 @@ def llm_probe_public_chat(url: str, query: str = "Hello") -> Dict:
             'timestamp': datetime.datetime.now(_UTC).isoformat(),
             'scope': 'benign_active',
         },
+        '_telemetry': _make_telemetry(started, quality=1.0 if chosen else 0.5),
     }
 
 
@@ -2807,6 +2880,7 @@ def llm_security_probe(url: str, authorized: bool = False, authorization_note: s
         authorization_note: Free-text scope description (engagement ID, asset,
             owner). Recorded in the output for audit.
     """
+    started = datetime.datetime.now(_UTC)
     if not authorized or not authorization_note.strip():
         return {
             'error': (
@@ -2814,9 +2888,8 @@ def llm_security_probe(url: str, authorized: bool = False, authorization_note: s
                 'Set authorized=True and provide an authorization_note describing scope.'
             ),
             'url': url,
+            '_telemetry': _make_telemetry(started, errors=['Active security probing requires explicit authorization'], quality=0.0),
         }
-
-    started = datetime.datetime.now(_UTC)
     shapes = [
         ('/api/chat', lambda q: {'messages': [{'role': 'user', 'content': q}]}),
         ('/v1/chat/completions', lambda q: {
@@ -2865,6 +2938,7 @@ def llm_security_probe(url: str, authorized: bool = False, authorization_note: s
             'timestamp': started.isoformat(),
             'scope': 'authorized_active',
         },
+        '_telemetry': _make_telemetry(started, quality=1.0),
     }
 
 
@@ -3767,6 +3841,7 @@ def get_privacy_policy(domain: str) -> Dict:
         indicators, per-jurisdiction compliance gap analysis, and
         cross-reference hints for tracker_scan().
     """
+    started = datetime.datetime.now(_UTC)
     headers = {'User-Agent': 'CyberSleuth/1.0'}
     policy_urls = _find_policy_urls(domain)
 
@@ -3849,6 +3924,7 @@ def get_privacy_policy(domain: str) -> Dict:
             'timestamp': datetime.datetime.now(_UTC).isoformat(),
             'methodology': 'cybersleuth://privacy-analysis',
         },
+        '_telemetry': _make_telemetry(started, errors=fetch_errors, quality=1.0 if not fetch_errors else 0.5),
     }
 
 
@@ -3878,6 +3954,7 @@ def scan_trackers(domain: str) -> Dict:
         context flags, policy contradiction hints, and tracker count by
         category/risk.
     """
+    started = datetime.datetime.now(_UTC)
     base = domain.rstrip('/')
     if not base.startswith('http'):
         base = f'https://{base}'
@@ -4033,4 +4110,5 @@ def scan_trackers(domain: str) -> Dict:
             'tracker_db_version': f'{len(_TRACKER_DB)} entries',
             'methodology': 'cybersleuth://privacy-analysis',
         },
+        '_telemetry': _make_telemetry(started, errors=[fetch_error] if fetch_error else [], quality=0.0 if fetch_error else 1.0),
     }
