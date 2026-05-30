@@ -129,7 +129,7 @@
 
 **Tech-Stack Intelligence — `career_sources`, `job_postings`, `github_recon`:**
 - Run `career_sources(domain)` to find the ATS platform (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio, etc.); note ATS choice as a regional/stage signal
-- Run `job_postings(ats, handle)` for each ATS with a public API to extract required and desired technology keywords across all open roles
+- Run `job_postings(board_url)` for each ATS with a public API — pass the `board_url` from `career_sources` output; the ATS and handle are identified automatically
 - Run `github_recon(org)` if the company has a public GitHub organisation — languages, dep files, and CI workflow signals are high-confidence ground truth
 - Corroborate: `kafka.*` or `data.*` CT log subdomains confirm data-platform claims; `auth0.*`/`okta.*` subdomains confirm identity provider claims; MX/TXT records confirm email and SSO tooling
 - Methodology and confidence calibration: `cybersleuth://tech-stack-recon`

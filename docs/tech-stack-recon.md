@@ -56,6 +56,13 @@ https://web.archive.org/cdx/search/cdx?url={domain}/careers*&output=json&
 
 Return archive URLs for manual inspection.
 
+**Discovery-first interface:**
+
+`career_sources(domain)` returns a `board_url` field for each ATS it discovers.
+Pass that URL directly to `job_postings(board_url)` — the ATS platform and
+company handle are identified automatically from the URL, so callers never need
+to name the platform explicitly.
+
 ---
 
 ## ATS coverage and regional distribution

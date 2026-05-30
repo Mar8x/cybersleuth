@@ -1401,6 +1401,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     'greenhouse': {
         'patterns': [r'boards\.greenhouse\.io/([A-Za-z0-9_-]+)',
                      r'board\.greenhouse\.io/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://boards.greenhouse.io/{handle}',
         'api': 'https://boards-api.greenhouse.io/v1/boards/{handle}/jobs?content=true',
         'list_key': 'jobs',
         'fields': {'title': 'title', 'location': ('location', 'name'),
@@ -1409,6 +1410,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     },
     'lever': {
         'patterns': [r'jobs\.lever\.co/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://jobs.lever.co/{handle}',
         'api': 'https://api.lever.co/v0/postings/{handle}?mode=json',
         'list_key': None,
         'fields': {'title': 'text', 'location': ('categories', 'location'),
@@ -1418,6 +1420,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     'ashby': {
         'patterns': [r'jobs\.ashbyhq\.com/([A-Za-z0-9_-]+)',
                      r'app\.ashbyhq\.com/jobs/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://jobs.ashbyhq.com/{handle}',
         'api': 'https://api.ashbyhq.com/posting-api/job-board/{handle}',
         'list_key': 'jobPostings',
         'fields': {'title': 'title', 'location': 'locationName',
@@ -1427,6 +1430,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     'workable': {
         'patterns': [r'apply\.workable\.com/([A-Za-z0-9_-]+)',
                      r'(?<!\.)([a-z0-9-]+)\.workable\.com(?!/api)'],
+        'board_url_template': 'https://apply.workable.com/{handle}',
         'api': 'https://apply.workable.com/api/v3/accounts/{handle}/jobs',
         'list_key': 'results',
         'fields': {'title': 'title', 'location': 'city', 'posted': 'published_on'},
@@ -1434,6 +1438,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     },
     'recruitee': {
         'patterns': [r'([a-z0-9-]+)\.recruitee\.com'],
+        'board_url_template': 'https://{handle}.recruitee.com',
         'api': 'https://{handle}.recruitee.com/api/offers/',
         'list_key': 'offers',
         'fields': {'title': 'title', 'location': 'city',
@@ -1442,6 +1447,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     },
     'smartrecruiters': {
         'patterns': [r'careers\.smartrecruiters\.com/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://careers.smartrecruiters.com/{handle}',
         'api': 'https://api.smartrecruiters.com/v1/companies/{handle}/postings',
         'list_key': 'content',
         'fields': {'title': 'name', 'location': ('location', 'city')},
@@ -1450,6 +1456,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     'personio': {
         'patterns': [r'([a-z0-9-]+)\.jobs\.personio\.(?:de|com)',
                      r'([a-z0-9-]+)\.personio\.de/job-listings'],
+        'board_url_template': 'https://{handle}.jobs.personio.de',
         'api': 'https://{handle}.jobs.personio.de/api/v1/jobs',
         'list_key': None,
         'fields': {'title': 'name', 'posted': 'created_at', 'description': 'description'},
@@ -1457,6 +1464,7 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     },
     'bamboohr': {
         'patterns': [r'([a-z0-9-]+)\.bamboohr\.com/careers'],
+        'board_url_template': 'https://{handle}.bamboohr.com/careers',
         'api': 'https://{handle}.bamboohr.com/careers/list',
         'list_key': 'result',
         'fields': {'title': 'jobOpeningName', 'location': 'location',
@@ -1466,22 +1474,26 @@ _ATS_PROVIDERS: Dict[str, Dict] = {
     'teamtailor': {
         'patterns': [r'([a-z0-9-]+)\.teamtailor\.com',
                      r'jobs\.teamtailor\.com/([A-Za-z0-9_-]+)'],
+        'board_url_template': 'https://{handle}.teamtailor.com',
         'api': None,
         'regions': ['nordic', 'eu'],
     },
     'workday': {
         'patterns': [r'([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com'],
+        'board_url_template': 'https://{handle}.myworkdayjobs.com',
         'api': None,
         'regions': ['enterprise', 'global'],
     },
     'icims': {
         'patterns': [r'([a-z0-9-]+)-careers\.icims\.com',
                      r'careers-([a-z0-9-]+)\.icims\.com'],
+        'board_url_template': 'https://{handle}-careers.icims.com',
         'api': None,
         'regions': ['us', 'enterprise'],
     },
     'taleo': {
         'patterns': [r'([a-z0-9-]+)\.taleo\.net'],
+        'board_url_template': 'https://{handle}.taleo.net',
         'api': None,
         'regions': ['enterprise'],
     },
@@ -1629,9 +1641,12 @@ def _detect_ats_in_text(text: str) -> List[Dict]:
                 handle = (m.group(1) if m.lastindex else '').rstrip('/')
                 if not handle or handle.lower() in _ATS_PLATFORM_SUBDOMAINS:
                     continue
+                tpl = spec.get('board_url_template', '')
+                board_url = tpl.replace('{handle}', handle) if tpl else m.group(0)
                 matches.append({
                     'ats': ats_name,
                     'handle': handle,
+                    'board_url': board_url,
                     'matched_url': m.group(0),
                     'has_api': spec.get('api') is not None,
                     'regions': spec.get('regions', []),
@@ -1751,33 +1766,44 @@ def find_career_sources(domain: str) -> Dict:
     }
 
 
-def fetch_job_postings(ats_type: str, handle: str, max_jobs: int = 50) -> Dict:
+def fetch_job_postings(board_url: str, max_jobs: int = 50) -> Dict:
     """
-    Fetch job postings from a known ATS provider and extract tech keywords.
+    Fetch job postings from a discovered ATS board URL and extract tech keywords.
+
+    The board_url is taken from the ``board_url`` field returned by
+    find_career_sources(). The ATS platform and company handle are identified
+    automatically from the URL — callers do not need to name the platform.
 
     Supported ATS platforms with public JSON APIs: greenhouse, lever, ashby,
     workable, recruitee, smartrecruiters, personio, bamboohr.
 
-    Call find_career_sources() first to discover the ats_type and handle for
-    a target domain. The methodology for interpreting tech keywords is in
+    The methodology for interpreting tech keywords is in
     cybersleuth://tech-stack-recon.
 
     Args:
-        ats_type: ATS name (e.g. "greenhouse", "lever"). Case-insensitive.
-        handle: Company handle on the ATS platform (e.g. "acmecorp").
+        board_url: ATS board URL from career_sources() (e.g.
+                   "https://boards.greenhouse.io/acmecorp").
         max_jobs: Maximum number of job postings to return (default 50).
 
     Returns:
         Dict with job list, aggregated tech keywords across all postings,
         and per-category frequency counts.
     """
-    ats_key = ats_type.lower().strip()
-    spec = _ATS_PROVIDERS.get(ats_key)
-    if not spec:
+    hits = _detect_ats_in_text(board_url)
+    if not hits:
         return {
-            'error': f'Unknown ATS type: {ats_type!r}. Known: {sorted(_ATS_PROVIDERS)}',
-            'ats': ats_type,
+            'error': (
+                f'Could not identify ATS platform from URL: {board_url!r}. '
+                'Pass the board_url value returned by career_sources().'
+            ),
+            'board_url': board_url,
         }
+
+    match = hits[0]
+    ats_type = match['ats']
+    handle = match['handle']
+    spec = _ATS_PROVIDERS[ats_type]
+
     if spec.get('api') is None:
         return {
             'error': (
@@ -1786,6 +1812,7 @@ def fetch_job_postings(ats_type: str, handle: str, max_jobs: int = 50) -> Dict:
             ),
             'ats': ats_type,
             'handle': handle,
+            'board_url': board_url,
         }
 
     api_url = spec['api'].replace('{handle}', handle)
@@ -1798,9 +1825,11 @@ def fetch_job_postings(ats_type: str, handle: str, max_jobs: int = 50) -> Dict:
         resp.raise_for_status()
         data = resp.json()
     except requests.exceptions.RequestException as e:
-        return {'error': f'Request failed: {str(e)}', 'ats': ats_type, 'handle': handle}
+        return {'error': f'Request failed: {str(e)}', 'ats': ats_type, 'handle': handle,
+                'board_url': board_url}
     except ValueError as e:
-        return {'error': f'JSON parse error: {str(e)}', 'ats': ats_type, 'handle': handle}
+        return {'error': f'JSON parse error: {str(e)}', 'ats': ats_type, 'handle': handle,
+                'board_url': board_url}
 
     list_key = spec.get('list_key')
     raw_jobs = data.get(list_key, data) if list_key else data
@@ -1824,6 +1853,7 @@ def fetch_job_postings(ats_type: str, handle: str, max_jobs: int = 50) -> Dict:
     return {
         'ats': ats_type,
         'handle': handle,
+        'board_url': board_url,
         'api_url': api_url,
         'total_jobs': len(raw_jobs),
         'jobs': jobs,
@@ -2157,11 +2187,14 @@ def tech_stack_profile(domain: str, github_org: Optional[str] = None) -> Dict:
 
     # 2. Job postings from each discovered ATS with a public API
     for ats_entry in profile['ats_found']:
-        ats_type = ats_entry['ats']
-        handle = ats_entry['handle']
         if not ats_entry.get('has_api'):
             continue
-        postings = fetch_job_postings(ats_type, handle, max_jobs=100)
+        ats_type = ats_entry['ats']
+        handle = ats_entry['handle']
+        board_url = ats_entry.get('board_url', '')
+        if not board_url:
+            continue
+        postings = fetch_job_postings(board_url, max_jobs=100)
         if 'error' in postings:
             profile['errors'].append(f'{ats_type}/{handle}: {postings["error"]}')
             continue

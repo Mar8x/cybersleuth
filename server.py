@@ -323,12 +323,15 @@ def career_sources(domain: str) -> dict:
 
 
 @mcp.tool()
-def job_postings(ats_type: str, handle: str, max_jobs: int = 50) -> dict:
-    """Fetch job postings from a known ATS and extract tech-stack keywords.
+def job_postings(board_url: str, max_jobs: int = 50) -> dict:
+    """Fetch job postings from a discovered ATS board URL and extract tech-stack keywords.
+
+    Use career_sources() first — it returns a ``board_url`` for each discovered
+    ATS. Pass that URL here; the ATS platform and company handle are identified
+    automatically from the URL.
 
     Supported ATS platforms with public JSON APIs: greenhouse, lever, ashby,
-    workable, recruitee, smartrecruiters, personio, bamboohr. Use
-    career_sources() first to discover the ats_type and handle for a domain.
+    workable, recruitee, smartrecruiters, personio, bamboohr.
 
     Returns per-job normalised records and aggregated keyword frequency counts
     across all postings, categorised by language, framework, cloud, DB, etc.
@@ -336,11 +339,11 @@ def job_postings(ats_type: str, handle: str, max_jobs: int = 50) -> dict:
     Methodology: cybersleuth://tech-stack-recon
 
     Args:
-        ats_type: ATS name (e.g. "greenhouse", "lever", "ashby")
-        handle: Company handle on the ATS (e.g. "acmecorp")
+        board_url: ATS board URL from career_sources() (e.g.
+                   "https://boards.greenhouse.io/acmecorp")
         max_jobs: Maximum number of postings to fetch (default 50)
     """
-    return fetch_job_postings(ats_type, handle, max_jobs)
+    return fetch_job_postings(board_url, max_jobs)
 
 
 @mcp.tool()

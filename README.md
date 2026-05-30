@@ -125,7 +125,7 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | `vt_domain_report` | VirusTotal reputation and analysis stats for a domain (rate-limited on free tier) |
 | `vt_ip_report` | VirusTotal reputation and analysis stats for an IP address (rate-limited on free tier) |
 | `career_sources` | Discover ATS platforms and career pages for a domain (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio + 6 more); Wayback Machine fallback |
-| `job_postings` | Fetch job postings from a known ATS and extract tech keywords by category; call `career_sources` first to get ats_type + handle |
+| `job_postings` | Fetch job postings from a discovered ATS board URL and extract tech keywords by category; pass the `board_url` returned by `career_sources` |
 | `github_recon` | GitHub org recon: repos, language distribution, dep manifests, CI/CD workflow tooling signals; set `GITHUB_TOKEN` for higher rate limit |
 | `tech_stack` | Synthesise a full tech-stack profile for a domain: orchestrates career_sources → job_postings → github_recon, merges keywords with source attribution |
 
