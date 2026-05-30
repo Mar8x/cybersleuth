@@ -1063,3 +1063,250 @@ class TestCertificateInfoRegression:
         if "certificates" in result:
             # sources_used is nested inside query_info
             assert "sources_used" in result.get("query_info", {})
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Mocked HTTP — Web Search / Research tools
+# ---------------------------------------------------------------------------
+
+def _mock_json_response(data: dict, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.reason = "OK" if status == 200 else "Error"
+    resp.json.return_value = data
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+class TestSearchBraveMocked:
+    BRAVE_RESPONSE = {
+        "web": {
+            "totalCount": 1234,
+            "results": [
+                {"title": "Example Site", "url": "https://example.com", "description": "An example.", "age": "2 days ago"},
+                {"title": "Another Site", "url": "https://other.com", "description": "Another.", "age": None},
+            ],
+        }
+    }
+
+    def test_success_returns_results(self):
+        from tools import search_brave
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_json_response(self.BRAVE_RESPONSE)
+            result = search_brave("key123", "test query")
+
+        assert result["query"] == "test query"
+        assert len(result["results"]) == 2
+        assert result["results"][0]["title"] == "Example Site"
+        assert result["results"][0]["url"] == "https://example.com"
+        assert result["total_estimated"] == 1234
+
+    def test_success_has_telemetry(self):
+        from tools import search_brave
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_json_response(self.BRAVE_RESPONSE)
+            result = search_brave("key123", "test query")
+
+        assert "_telemetry" in result
+        assert "duration_ms" in result["_telemetry"]
+        assert result["_telemetry"]["quality"] == 1.0
+
+    def test_empty_results_quality_half(self):
+        from tools import search_brave
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_json_response({"web": {"totalCount": 0, "results": []}})
+            result = search_brave("key123", "obscure query")
+
+        assert result["results"] == []
+        assert result["_telemetry"]["quality"] == 0.5
+
+    def test_http_error_returns_error_dict(self):
+        import requests
+        from tools import search_brave
+        mock_resp = _mock_json_response({}, status=401)
+        mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=mock_resp
+        )
+        with patch("tools.requests.get", return_value=mock_resp):
+            result = search_brave("badkey", "query")
+
+        assert "error" in result
+        assert "Brave Search" in result["error"]
+        assert result["_telemetry"]["quality"] == 0.0
+
+    def test_network_error_returns_error_dict(self):
+        import requests
+        from tools import search_brave
+        with patch("tools.requests.get", side_effect=requests.exceptions.ConnectionError("offline")):
+            result = search_brave("key123", "query")
+
+        assert "error" in result
+        assert "Brave Search" in result["error"]
+        assert result["_telemetry"]["quality"] == 0.0
+
+    def test_count_clamped_to_20(self):
+        from tools import search_brave
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _mock_json_response(self.BRAVE_RESPONSE)
+            search_brave("key123", "query", count=50)
+
+        _, kwargs = mock_get.call_args
+        assert kwargs["params"]["count"] == 20
+
+
+class TestSearchTavilyMocked:
+    TAVILY_RESPONSE = {
+        "answer": "This is a synthesised answer.",
+        "results": [
+            {"title": "Source A", "url": "https://sourcea.com", "content": "Relevant excerpt.", "score": 0.92},
+            {"title": "Source B", "url": "https://sourceb.com", "content": "Another excerpt.", "score": 0.85},
+        ],
+        "response_time": 1.23,
+    }
+
+    def test_success_returns_answer_and_results(self):
+        from tools import search_tavily
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(self.TAVILY_RESPONSE)
+            result = search_tavily("key123", "what is NIS2?")
+
+        assert result["query"] == "what is NIS2?"
+        assert result["answer"] == "This is a synthesised answer."
+        assert len(result["results"]) == 2
+        assert result["results"][0]["score"] == 0.92
+        assert result["response_time"] == 1.23
+
+    def test_success_has_telemetry(self):
+        from tools import search_tavily
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(self.TAVILY_RESPONSE)
+            result = search_tavily("key123", "query")
+
+        assert "_telemetry" in result
+        assert result["_telemetry"]["quality"] == 1.0
+
+    def test_null_answer_allowed(self):
+        from tools import search_tavily
+        data = {**self.TAVILY_RESPONSE, "answer": None}
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(data)
+            result = search_tavily("key123", "query")
+
+        assert result["answer"] is None
+        assert result["_telemetry"]["quality"] == 1.0  # results still present
+
+    def test_http_error_returns_error_dict(self):
+        import requests
+        from tools import search_tavily
+        mock_resp = _mock_json_response({}, status=429)
+        mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=mock_resp
+        )
+        with patch("tools.requests.post", return_value=mock_resp):
+            result = search_tavily("key123", "query")
+
+        assert "error" in result
+        assert "Tavily" in result["error"]
+        assert result["_telemetry"]["quality"] == 0.0
+
+    def test_network_error_returns_error_dict(self):
+        import requests
+        from tools import search_tavily
+        with patch("tools.requests.post", side_effect=requests.exceptions.Timeout("timed out")):
+            result = search_tavily("key123", "query")
+
+        assert "error" in result
+        assert "Tavily" in result["error"]
+        assert result["_telemetry"]["quality"] == 0.0
+
+    def test_include_answer_sent_in_body(self):
+        from tools import search_tavily
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(self.TAVILY_RESPONSE)
+            search_tavily("key123", "query", search_depth="advanced", max_results=3)
+
+        _, kwargs = mock_post.call_args
+        body = kwargs["json"]
+        assert body["include_answer"] is True
+        assert body["search_depth"] == "advanced"
+        assert body["max_results"] == 3
+
+
+class TestGetPerplexitySynthesisMocked:
+    PERPLEXITY_RESPONSE = {
+        "model": "sonar",
+        "choices": [{"message": {"content": "NIS2 is the EU cybersecurity directive."}}],
+        "citations": ["https://eur-lex.europa.eu/nis2", "https://enisa.europa.eu/nis2"],
+    }
+
+    def test_success_returns_answer_and_citations(self):
+        from tools import get_perplexity_synthesis
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(self.PERPLEXITY_RESPONSE)
+            result = get_perplexity_synthesis("key123", "What is NIS2?")
+
+        assert result["query"] == "What is NIS2?"
+        assert result["answer"] == "NIS2 is the EU cybersecurity directive."
+        assert len(result["citations"]) == 2
+        assert result["model"] == "sonar"
+
+    def test_success_has_telemetry(self):
+        from tools import get_perplexity_synthesis
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(self.PERPLEXITY_RESPONSE)
+            result = get_perplexity_synthesis("key123", "query")
+
+        assert "_telemetry" in result
+        assert result["_telemetry"]["quality"] == 1.0
+
+    def test_empty_answer_quality_half(self):
+        from tools import get_perplexity_synthesis
+        data = {"model": "sonar", "choices": [{"message": {"content": ""}}], "citations": []}
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(data)
+            result = get_perplexity_synthesis("key123", "query")
+
+        assert result["answer"] == ""
+        assert result["_telemetry"]["quality"] == 0.5
+
+    def test_http_error_returns_error_dict(self):
+        import requests
+        from tools import get_perplexity_synthesis
+        mock_resp = _mock_json_response({}, status=403)
+        mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=mock_resp
+        )
+        with patch("tools.requests.post", return_value=mock_resp):
+            result = get_perplexity_synthesis("badkey", "query")
+
+        assert "error" in result
+        assert "Perplexity" in result["error"]
+        assert result["_telemetry"]["quality"] == 0.0
+
+    def test_network_error_returns_error_dict(self):
+        import requests
+        from tools import get_perplexity_synthesis
+        with patch("tools.requests.post", side_effect=requests.exceptions.ConnectionError("down")):
+            result = get_perplexity_synthesis("key123", "query")
+
+        assert "error" in result
+        assert "Perplexity" in result["error"]
+        assert result["_telemetry"]["quality"] == 0.0
+
+    def test_bearer_auth_header_sent(self):
+        from tools import get_perplexity_synthesis
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(self.PERPLEXITY_RESPONSE)
+            get_perplexity_synthesis("mytoken", "query")
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["headers"]["Authorization"] == "Bearer mytoken"
+
+    def test_model_override(self):
+        from tools import get_perplexity_synthesis
+        with patch("tools.requests.post") as mock_post:
+            mock_post.return_value = _mock_json_response(self.PERPLEXITY_RESPONSE)
+            get_perplexity_synthesis("key123", "query", model="sonar-pro")
+
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["model"] == "sonar-pro"

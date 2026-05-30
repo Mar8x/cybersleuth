@@ -142,6 +142,12 @@ If any layer is **not** shared, document and reason why — this is intelligence
 - Any internet-reachable MCP server is treated as **HIGH** severity by default — reference CVE-2025-49596 (MCP Inspector unauth RCE, CVSS 9.4) and the 2026 Anthropic MCP STDIO RCE disclosure.
 - Methodology and signal catalogue: `cybersleuth://llm-recon`.
 
+### Research & Web Search
+- Use `web_search` for raw, privacy-neutral web results — reputation checks, entity lookups, news, cross-referencing sources where objectivity matters. No personalisation or filter bubbles (Brave index). Requires `BRAVE_API_KEY`.
+- Use `research` for structured research-agent queries — best for iterative investigation, competitive intel, and multi-source corroboration. Returns a synthesised answer plus ranked source excerpts. Use `search_depth="advanced"` for deeper coverage. Requires `TAVILY_API_KEY`.
+- Use `research_synthesis` for AI-synthesised answers with numbered citations — best for business intel summaries, ransomware/breach context, people OSINT background, and regulatory lookups where you need a direct answer rather than raw links. Requires `PERPLEXITY_API_KEY`.
+- **Fallback chain when keys are absent:** use `web_search` → `research` → `research_synthesis` in order of availability; if none are set, fall back to manual web fetch per the Tools and manual collection section below.
+
 ## Investigation Approach
 
 - Start broad and narrow down based on findings

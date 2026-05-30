@@ -27,6 +27,9 @@ from tools import (
     llm_security_probe as _llm_security_probe_impl,
     get_privacy_policy,
     scan_trackers,
+    search_brave,
+    search_tavily,
+    get_perplexity_synthesis,
 )
 
 mcp = FastMCP(
@@ -508,6 +511,64 @@ def tracker_scan(domain: str) -> dict:
         domain: Target domain (e.g. example.com)
     """
     return scan_trackers(domain)
+
+
+@mcp.tool()
+def web_search(query: str, count: int = 10) -> dict:
+    """Search the web via Brave Search — privacy-neutral, unbiased index.
+
+    Returns raw web results without personalisation or filter bubbles.
+    Best for: reputation checks, entity lookups, news, source cross-referencing,
+    and any search where objectivity matters. Results include title, URL,
+    description, and age. Set BRAVE_API_KEY to enable.
+
+    Args:
+        query: Search query
+        count: Number of results to return
+    """
+    api_key = os.environ.get("BRAVE_API_KEY")
+    if not api_key:
+        return {"error": "BRAVE_API_KEY environment variable is not set — get a key at https://api.search.brave.com/"}
+    return search_brave(api_key, query, count)
+
+
+@mcp.tool()
+def research(query: str, search_depth: str = "basic", max_results: int = 5) -> dict:
+    """Research-agent–optimised search via Tavily with structured results.
+
+    Purpose-built for AI research workflows. Returns a synthesised answer plus
+    ranked source excerpts. Best for: iterative investigation, competitive intel,
+    multi-source corroboration, and follow-up queries. Use search_depth="advanced"
+    for deeper coverage at the cost of latency. Set TAVILY_API_KEY to enable.
+
+    Args:
+        query: Research question or search query
+        search_depth: "basic" (fast) or "advanced" (deeper, slower)
+        max_results: Number of source results to return
+    """
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return {"error": "TAVILY_API_KEY environment variable is not set — get a key at https://tavily.com/"}
+    return search_tavily(api_key, query, search_depth, max_results)
+
+
+@mcp.tool()
+def research_synthesis(query: str) -> dict:
+    """AI-synthesised research answer with citations via Perplexity.
+
+    Returns a concise synthesised answer drawn from live web sources, with
+    numbered citations. Best for: business intel synthesis, ransomware/breach
+    context, people OSINT background, regulatory lookups, and any query where
+    you need a summarised answer rather than raw links. Set PERPLEXITY_API_KEY
+    to enable.
+
+    Args:
+        query: Research question (can be detailed and contextual)
+    """
+    api_key = os.environ.get("PERPLEXITY_API_KEY")
+    if not api_key:
+        return {"error": "PERPLEXITY_API_KEY environment variable is not set — get a key at https://www.perplexity.ai/api"}
+    return get_perplexity_synthesis(api_key, query)
 
 
 if __name__ == "__main__":

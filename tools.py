@@ -4112,3 +4112,113 @@ def scan_trackers(domain: str) -> Dict:
         },
         '_telemetry': _make_telemetry(started, errors=[fetch_error] if fetch_error else [], quality=0.0 if fetch_error else 1.0),
     }
+
+
+# ── Web Search / Research ─────────────────────────────────────────────────────
+
+def _search_error(query: str, service: str, started: datetime.datetime, exc: Exception) -> Dict:
+    if isinstance(exc, requests.exceptions.HTTPError):
+        msg = f'{service} HTTP error: {exc.response.status_code} {exc.response.reason}'
+    else:
+        msg = f'{service} request failed: {str(exc)}'
+    return {'query': query, 'error': msg, '_telemetry': _make_telemetry(started, errors=[str(exc)], quality=0.0)}
+
+
+def search_brave(api_key: str, query: str, count: int = 10) -> Dict:
+    """Search the web via Brave Search API (privacy-neutral index)."""
+    started = datetime.datetime.now(_UTC)
+    try:
+        resp = requests.get(
+            'https://api.search.brave.com/res/v1/web/search',
+            headers={'Accept': 'application/json', 'X-Subscription-Token': api_key},
+            params={'q': query, 'count': min(count, 20)},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        web = data.get('web', {})
+        results = [
+            {
+                'title': r.get('title', ''),
+                'url': r.get('url', ''),
+                'description': r.get('description', ''),
+                'age': r.get('age'),
+            }
+            for r in web.get('results', [])
+        ]
+        return {
+            'query': query,
+            'total_estimated': web.get('totalCount'),
+            'results': results,
+            '_telemetry': _make_telemetry(started, quality=1.0 if results else 0.5),
+        }
+    except (requests.exceptions.HTTPError, requests.exceptions.RequestException) as e:
+        return _search_error(query, 'Brave Search', started, e)
+
+
+def search_tavily(api_key: str, query: str, search_depth: str = 'basic', max_results: int = 5) -> Dict:
+    """Search via Tavily — optimised for research agents with structured results."""
+    started = datetime.datetime.now(_UTC)
+    try:
+        resp = requests.post(
+            'https://api.tavily.com/search',
+            json={
+                'api_key': api_key,
+                'query': query,
+                'search_depth': search_depth,
+                'max_results': max_results,
+                'include_answer': True,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = [
+            {
+                'title': r.get('title', ''),
+                'url': r.get('url', ''),
+                'content': r.get('content', ''),
+                'score': r.get('score'),
+            }
+            for r in data.get('results', [])
+        ]
+        return {
+            'query': query,
+            'answer': data.get('answer'),
+            'results': results,
+            'response_time': data.get('response_time'),
+            '_telemetry': _make_telemetry(started, quality=1.0 if results else 0.5),
+        }
+    except (requests.exceptions.HTTPError, requests.exceptions.RequestException) as e:
+        return _search_error(query, 'Tavily', started, e)
+
+
+def get_perplexity_synthesis(api_key: str, query: str, model: str = 'sonar') -> Dict:
+    """AI-synthesised research answer with citations via Perplexity."""
+    started = datetime.datetime.now(_UTC)
+    try:
+        resp = requests.post(
+            'https://api.perplexity.ai/chat/completions',
+            headers={
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json',
+            },
+            json={
+                'model': model,
+                'messages': [{'role': 'user', 'content': query}],
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        answer = data.get('choices', [{}])[0].get('message', {}).get('content', '')
+        citations = data.get('citations', [])
+        return {
+            'query': query,
+            'answer': answer,
+            'citations': citations,
+            'model': data.get('model', model),
+            '_telemetry': _make_telemetry(started, quality=1.0 if answer else 0.5),
+        }
+    except (requests.exceptions.HTTPError, requests.exceptions.RequestException) as e:
+        return _search_error(query, 'Perplexity', started, e)

@@ -1,5 +1,9 @@
 # Investigation data (restricted, never committed)
 investigations/
+MEMORY/
+
+# Local memory/persistence layer (not part of distributed package)
+memory.py
 
 # Planning files (local only)
 Plans/
