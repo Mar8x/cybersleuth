@@ -22,3 +22,6 @@ __pycache__/
 .cursor/
 .idea/
 .vscode/
+
+# Claude Code local settings
+.claude/
