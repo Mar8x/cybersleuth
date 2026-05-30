@@ -19,6 +19,7 @@ CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes cyber-inves
 - **Web Analysis** -- URLScan.io scanning and historical data, BuiltWith technology lookup (free API)
 - **Threat Intelligence** -- Shodan searches, VirusTotal domain/IP reports, infrastructure mapping, multi-source correlation
 - **Tech-Stack Intelligence** -- ATS discovery (Greenhouse, Lever, Ashby, Workable, Teamtailor, Personio, and 6 more), job-posting keyword extraction, GitHub org recon (repos, dep files, CI workflows), Wayback Machine fallback, synthesis profile
+- **LLM / AI Surface Recon** -- passive fingerprinting of LLM-powered apps (provider, framework, model strings, leaked credentials, MCP exposure); benign chat probe; authorization-gated OWASP LLM Top 10:2025 probes
 - **People & Company OSINT** -- people investigation methodology, jurisdiction data availability, CV claim verification, content character profiling
 
 ## Requirements
@@ -128,6 +129,9 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | `job_postings` | Fetch job postings from a discovered ATS board URL and extract tech keywords by category; pass the `board_url` returned by `career_sources` |
 | `github_recon` | GitHub org recon: repos, language distribution, dep manifests, CI/CD workflow tooling signals; set `GITHUB_TOKEN` for higher rate limit |
 | `tech_stack` | Synthesise a full tech-stack profile for a domain: orchestrates career_sources → job_postings → github_recon, merges keywords with source attribution |
+| `llm_fingerprint` | Passive LLM-app fingerprint: provider, framework, model strings, leaked client-side credentials, MCP exposure, OWASP LLM Top 10:2025 findings |
+| `llm_probe_public_chat` | Send one benign user message to a discovered public chat endpoint; detects model self-disclosure |
+| `llm_security_probe` | **Authorization-gated.** OWASP LLM01/02/07 probe battery (refuses without `authorized=True` + `authorization_note`) |
 
 ### Resources & Prompts
 
@@ -138,6 +142,7 @@ The `docs/` directory contains standalone reference guides stripped of agent-spe
 | Resource | `cybersleuth://people-osint` | People OSINT methodology (jurisdiction guide, CV scorecard, character profiling) |
 | Resource | `cybersleuth://company-ddr` | Company DDR workflow: 5-phase playbook for due diligence investigations producing a DDR PDF |
 | Resource | `cybersleuth://tech-stack-recon` | Tech-stack intelligence methodology: ATS discovery, job-posting extraction, GitHub recon, LinkedIn dorks, Wayback fallback, confidence calibration |
+| Resource | `cybersleuth://llm-recon` | LLM / AI surface reconnaissance methodology: passive fingerprint signals, OWASP LLM Top 10:2025 mapping, authorization tiers, research citations |
 | Prompt | CyberSleuth system instructions | Load instructions as a prompt for use as system or project instructions |
 
 ## Architecture
