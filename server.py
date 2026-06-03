@@ -580,8 +580,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.transport in ("sse", "streamable-http"):
+        from mcp.server.transport_security import TransportSecuritySettings
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+        # Disable DNS rebinding protection for internal service-to-service calls
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False
+        )
         mcp.run(transport=args.transport)
     else:
         mcp.run()
