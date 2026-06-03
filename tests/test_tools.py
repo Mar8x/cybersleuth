@@ -1310,3 +1310,77 @@ class TestGetPerplexitySynthesisMocked:
 
         _, kwargs = mock_post.call_args
         assert kwargs["json"]["model"] == "sonar-pro"
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Mocked HTTP — security.txt (RFC 9116) validation
+# ---------------------------------------------------------------------------
+
+VALID_SECURITY_TXT = """\
+# Our security policy
+Contact: mailto:security@example.com
+Expires: 2030-01-01T00:00:00.000Z
+Encryption: https://example.com/pgp-key.txt
+Policy: https://example.com/security-policy
+"""
+
+# A typical SPA/parking page returned with HTTP 200 for /.well-known/security.txt.
+SPA_HTML_PAGE = """\
+<!DOCTYPE html>
+<html lang="en"><head><title>Welcome</title>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-X"></script>
+</head><body><a href="https://example.com">home</a></body></html>
+"""
+
+
+def _secjson_resp(text, status=200, content_type="text/plain"):
+    resp = MagicMock()
+    resp.status_code = status
+    resp.text = text
+    resp.headers = {"content-type": content_type}
+    return resp
+
+
+class TestGetSecurityTxt:
+    def test_valid_security_txt_found(self):
+        from tools import get_security_txt
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _secjson_resp(VALID_SECURITY_TXT)
+            result = get_security_txt("example.com")
+        assert result["found"] is True
+        assert result["fields"]["contact"] == ["mailto:security@example.com"]
+        assert result["fields"]["expires"] == "2030-01-01T00:00:00.000Z"
+        assert result["is_expired"] is False
+
+    def test_html_page_rejected(self):
+        """An HTML 200 (SPA/parking/404) must NOT be reported as a security.txt."""
+        from tools import get_security_txt
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _secjson_resp(SPA_HTML_PAGE, content_type="text/html")
+            result = get_security_txt("example.com")
+        assert result["found"] is False
+        assert "raw" not in result          # no HTML blob stored
+        assert "fields" not in result       # no garbage fields parsed from HTML
+
+    def test_html_without_content_type_still_rejected(self):
+        """Body sniffing catches HTML even if the server mislabels content-type."""
+        from tools import get_security_txt
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _secjson_resp(SPA_HTML_PAGE, content_type="text/plain")
+            result = get_security_txt("example.com")
+        assert result["found"] is False
+
+    def test_plaintext_without_directives_rejected(self):
+        """Plain text that isn't a security.txt (no RFC 9116 directive) is not found."""
+        from tools import get_security_txt
+        with patch("tools.requests.get") as mock_get:
+            mock_get.return_value = _secjson_resp("hello: world\nfoo: bar\n")
+            result = get_security_txt("example.com")
+        assert result["found"] is False
+
+    def test_not_found_on_connection_error(self):
+        import requests
+        from tools import get_security_txt
+        with patch("tools.requests.get", side_effect=requests.exceptions.ConnectionError("x")):
+            result = get_security_txt("example.com")
+        assert result["found"] is False

@@ -292,61 +292,30 @@ def get_certificate_info(domain: str, include_expired: bool = False, wildcard: b
     }
 
 
-def get_security_txt(domain: str) -> Dict:
-    """
-    Fetch and parse security.txt for a domain (RFC 9116).
+# RFC 9116 directives. A genuine security.txt must contain at least one of these
+# (Contact is mandatory per the spec). Used to reject HTML/SPA/404 pages that many
+# servers return with HTTP 200 for /.well-known/security.txt.
+_RFC9116_KNOWN = {
+    'contact', 'expires', 'encryption', 'acknowledgments',
+    'preferred-languages', 'canonical', 'policy', 'hiring', 'csaf',
+}
 
-    Tries /.well-known/security.txt first (canonical per RFC 9116), then
-    /security.txt as a legacy fallback. Attempts HTTPS before HTTP.
+_HTML_MARKERS = ('<!doctype html', '<html', '<head', '<body', '<script', '<title')
 
-    Args:
-        domain: Domain to check (e.g. example.com)
 
-    Returns:
-        Dict with found status, parsed RFC 9116 fields, expiry check, and raw content
-    """
-    started = datetime.datetime.now(_UTC)
-    _MULTI_VALUE = {'contact', 'acknowledgments', 'encryption', 'hiring', 'policy', 'canonical'}
-    candidates = [
-        f'https://{domain}/.well-known/security.txt',
-        f'https://{domain}/security.txt',
-        f'http://{domain}/.well-known/security.txt',
-        f'http://{domain}/security.txt',
-    ]
+def _looks_like_html(text: str, content_type: str) -> bool:
+    """True if the response is an HTML page rather than a plain-text security.txt."""
+    if content_type and content_type.split(';', 1)[0].strip().lower() == 'text/html':
+        return True
+    head = text[:1024].lower()
+    return any(marker in head for marker in _HTML_MARKERS)
 
-    content = None
-    fetched_url = None
-    last_error = None
 
-    for url in candidates:
-        try:
-            resp = requests.get(
-                url,
-                timeout=10,
-                allow_redirects=True,
-                headers={'User-Agent': 'CyberSleuth/1.0'},
-            )
-            if resp.status_code == 200 and resp.text.strip():
-                content = resp.text
-                fetched_url = url
-                break
-        except requests.exceptions.RequestException as e:
-            last_error = str(e)
-            continue
-
-    if not content:
-        return {
-            'found': False,
-            'domain': domain,
-            'error': last_error or 'security.txt not found at standard locations',
-            'urls_tried': candidates,
-            '_telemetry': _make_telemetry(started, errors=[last_error or 'not found'], quality=0.5),
-        }
-
-    # Parse RFC 9116 fields
+def _parse_security_txt_fields(content: str) -> tuple:
+    """Parse RFC 9116 key:value lines into (fields, comments)."""
+    multi_value = {'contact', 'acknowledgments', 'encryption', 'hiring', 'policy', 'canonical'}
     fields: Dict = {}
     comments: List[str] = []
-
     for line in content.splitlines():
         stripped = line.rstrip()
         if not stripped:
@@ -363,10 +332,91 @@ def get_security_txt(domain: str) -> Dict:
         value = value.strip()
         if not key or not value:
             continue
-        if key in _MULTI_VALUE:
+        if key in multi_value:
             fields.setdefault(key, []).append(value)
         else:
             fields[key] = value
+    return fields, comments
+
+
+def get_security_txt(domain: str) -> Dict:
+    """
+    Fetch and parse security.txt for a domain (RFC 9116).
+
+    Tries /.well-known/security.txt first (canonical per RFC 9116), then
+    /security.txt as a legacy fallback. Attempts HTTPS before HTTP.
+
+    Args:
+        domain: Domain to check (e.g. example.com)
+
+    Returns:
+        Dict with found status, parsed RFC 9116 fields, expiry check, and raw content
+    """
+    started = datetime.datetime.now(_UTC)
+    candidates = [
+        f'https://{domain}/.well-known/security.txt',
+        f'https://{domain}/security.txt',
+        f'http://{domain}/.well-known/security.txt',
+        f'http://{domain}/security.txt',
+    ]
+
+    content = None
+    fetched_url = None
+    fields: Dict = {}
+    comments: List[str] = []
+    last_error = None
+    rejected_html = False
+    rejected_nonconforming = False
+
+    for url in candidates:
+        try:
+            resp = requests.get(
+                url,
+                timeout=10,
+                allow_redirects=True,
+                headers={'User-Agent': 'CyberSleuth/1.0'},
+            )
+        except requests.exceptions.RequestException as e:
+            last_error = str(e)
+            continue
+
+        if resp.status_code != 200 or not resp.text.strip():
+            continue
+
+        body = resp.text
+        content_type = resp.headers.get('content-type', '')
+
+        # Many sites serve their homepage / SPA index.html / a custom 404 page with
+        # HTTP 200 for this path. Reject HTML — it is not a security.txt.
+        if _looks_like_html(body, content_type):
+            rejected_html = True
+            continue
+
+        # Require at least one genuine RFC 9116 directive (Contact is mandatory). This
+        # rejects arbitrary plain-text responses that happen to contain "key: value" lines.
+        parsed_fields, parsed_comments = _parse_security_txt_fields(body)
+        if not (_RFC9116_KNOWN & set(parsed_fields)):
+            rejected_nonconforming = True
+            continue
+
+        content = body
+        fetched_url = url
+        fields = parsed_fields
+        comments = parsed_comments
+        break
+
+    if not content:
+        if rejected_html or rejected_nonconforming:
+            reason = 'no valid security.txt (HTML or non-conforming content at standard locations)'
+        else:
+            reason = last_error or 'security.txt not found at standard locations'
+        return {
+            'found': False,
+            'domain': domain,
+            'error': reason,
+            'urls_tried': candidates,
+            '_telemetry': _make_telemetry(started, errors=[reason], quality=0.5),
+        }
 
     # Check whether the file itself has expired (Expires field is required by RFC 9116)
     is_expired = None
@@ -385,7 +435,7 @@ def get_security_txt(domain: str) -> Dict:
         'fields': fields,
         'is_expired': is_expired,
         'comments': comments,
-        'raw': content,
+        'raw': content[:4000],  # security.txt is small; cap guards against odd large text/plain
         '_telemetry': _make_telemetry(started, quality=1.0),
     }
 
