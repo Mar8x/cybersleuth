@@ -31,6 +31,7 @@ from tools import (
     search_tavily,
     get_perplexity_synthesis,
     hudson_rock_domain,
+    get_email_auth,
 )
 
 mcp = FastMCP(
@@ -584,6 +585,20 @@ def hudson_rock(domain: str) -> dict:
         domain: Target domain to check (e.g. example.com)
     """
     return hudson_rock_domain(domain)
+
+
+@mcp.tool()
+def email_auth(domain: str) -> dict:
+    """Check a domain's email authentication posture: SPF, DMARC, and DKIM.
+
+    Parses the SPF (v=spf1) and DMARC (_dmarc) records, probes common DKIM
+    selectors, and reports an overall posture (strong/partial/weak/none) plus
+    a list of gaps (e.g. no SPF, DMARC p=none, no DKIM found).
+
+    Args:
+        domain: Domain to check (e.g. example.com)
+    """
+    return get_email_auth(domain)
 
 
 if __name__ == "__main__":

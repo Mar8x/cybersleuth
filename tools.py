@@ -4276,3 +4276,127 @@ def hudson_rock_domain(domain: str) -> Dict:
         err = f"Hudson Rock lookup failed: {e}"
         return {"error": err, "domain": domain,
                 "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
+
+
+# Common DKIM selectors — DKIM keys can't be enumerated, so we probe known ones.
+_DKIM_SELECTORS = [
+    "google", "default", "selector1", "selector2", "k1", "dkim",
+    "mail", "s1", "s2", "mandrill", "mxvault", "everlytickey1", "smtp",
+]
+
+
+def _txt_strings(domain: str) -> list[str]:
+    """Return TXT record strings for a name, or [] on any failure."""
+    try:
+        resolver = dns.resolver.Resolver()
+        answers = resolver.resolve(domain, "TXT")
+        out = []
+        for rdata in answers:
+            # dnspython joins quoted chunks; normalize to a single string.
+            s = "".join(p.decode() if isinstance(p, bytes) else str(p) for p in rdata.strings) \
+                if hasattr(rdata, "strings") else str(rdata).strip('"')
+            out.append(s)
+        return out
+    except Exception:
+        return []
+
+
+def get_email_auth(domain: str) -> Dict:
+    """
+    Check a domain's email authentication posture: SPF, DMARC, and DKIM.
+
+    SPF: parses the v=spf1 TXT record and its all-qualifier.
+    DMARC: parses the _dmarc.<domain> v=DMARC1 record (policy, pct, reporting).
+    DKIM: probes common selectors (google, default, selector1/2, k1, ...) since
+    DKIM keys cannot be enumerated; reports which resolve.
+
+    Args:
+        domain: Domain to check (e.g. example.com)
+
+    Returns:
+        Dict with parsed records, posture flags, an overall posture, and gaps.
+    """
+    started = datetime.datetime.now(_UTC)
+    try:
+        gaps: list[str] = []
+
+        # ── SPF ──
+        spf_record = next((t for t in _txt_strings(domain) if t.lower().startswith("v=spf1")), None)
+        spf_all = None
+        if spf_record:
+            low = spf_record.lower()
+            if "-all" in low:
+                spf_all = "hardfail"
+            elif "~all" in low:
+                spf_all = "softfail"
+            elif "?all" in low:
+                spf_all = "neutral"
+            elif "+all" in low:
+                spf_all = "pass-all"
+            includes = [tok.split(":", 1)[1] for tok in spf_record.split() if tok.lower().startswith("include:")]
+        else:
+            includes = []
+            gaps.append("No SPF record")
+        if spf_all in ("softfail", "neutral", "pass-all"):
+            gaps.append(f"SPF policy is weak ({spf_all})")
+
+        # ── DMARC ──
+        dmarc_record = next((t for t in _txt_strings(f"_dmarc.{domain}") if t.lower().startswith("v=dmarc1")), None)
+        dmarc: dict[str, str] = {}
+        if dmarc_record:
+            for part in dmarc_record.split(";"):
+                if "=" in part:
+                    k, v = part.strip().split("=", 1)
+                    dmarc[k.strip().lower()] = v.strip()
+        else:
+            gaps.append("No DMARC record")
+        dmarc_policy = dmarc.get("p")
+        if dmarc_record and dmarc_policy == "none":
+            gaps.append("DMARC policy is p=none (monitor only)")
+        if dmarc_record and not dmarc.get("rua"):
+            gaps.append("DMARC has no aggregate reporting (rua)")
+
+        # ── DKIM (probe common selectors) ──
+        dkim_found = []
+        for sel in _DKIM_SELECTORS:
+            recs = _txt_strings(f"{sel}._domainkey.{domain}")
+            for r in recs:
+                if "v=dkim1" in r.lower() or "k=" in r.lower() or "p=" in r.lower():
+                    dkim_found.append({"selector": sel, "record": r[:200]})
+                    break
+        if not dkim_found:
+            gaps.append("No DKIM selector found (probed common selectors)")
+
+        # ── Posture ──
+        strong_spf = spf_all == "hardfail"
+        strong_dmarc = dmarc_policy in ("quarantine", "reject")
+        if strong_spf and strong_dmarc and dkim_found:
+            posture = "strong"
+        elif spf_record and dmarc_record:
+            posture = "partial"
+        elif spf_record or dmarc_record:
+            posture = "weak"
+        else:
+            posture = "none"
+
+        quality = 1.0 if (spf_record and dmarc_record) else (0.5 if (spf_record or dmarc_record) else 0.5)
+        return {
+            "domain": domain,
+            "spf_record": spf_record,
+            "spf_policy": spf_all,
+            "spf_includes": includes,
+            "dmarc_record": dmarc_record,
+            "dmarc_policy": dmarc_policy,
+            "dmarc_pct": dmarc.get("pct"),
+            "dmarc_rua": dmarc.get("rua"),
+            "dmarc_sp": dmarc.get("sp"),
+            "dkim_selectors_found": [d["selector"] for d in dkim_found],
+            "dkim_records": dkim_found,
+            "posture": posture,
+            "gaps": gaps,
+            "_telemetry": _make_telemetry(started, quality=quality),
+        }
+    except Exception as e:
+        err = f"Email-auth lookup failed: {e}"
+        return {"error": err, "domain": domain,
+                "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
