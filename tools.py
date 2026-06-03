@@ -4222,3 +4222,57 @@ def get_perplexity_synthesis(api_key: str, query: str, model: str = 'sonar') -> 
         }
     except (requests.exceptions.HTTPError, requests.exceptions.RequestException) as e:
         return _search_error(query, 'Perplexity', started, e)
+
+
+def hudson_rock_domain(domain: str) -> Dict:
+    """
+    Check if a domain appears in infostealer logs via Hudson Rock Cavalier (free, no API key).
+
+    Returns counts of compromised employees, users, and third-party exposures,
+    plus the URLs captured from stealer-infected machines.
+
+    Args:
+        domain: Target domain (e.g. example.com)
+
+    Returns:
+        Dict with employees, users, third_parties counts and captured URL samples.
+    """
+    started = datetime.datetime.now(_UTC)
+    try:
+        resp = requests.get(
+            "https://cavalier.hudsonrock.com/api/json/v2/osint-tools/search-by-domain",
+            params={"domain": domain},
+            timeout=15,
+            headers={"User-Agent": "cybersleuth-osint/1.0"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        employees = data.get("employees", 0)
+        users = data.get("users", 0)
+        third_parties = data.get("third_parties", 0)
+        total = data.get("total", 0)
+        total_stealers_db = data.get("totalStealers", 0)
+
+        stats = data.get("stats", {})
+        employee_urls = (data.get("data", {}).get("employees_urls") or [])[:10]
+        client_urls = (data.get("data", {}).get("clients_urls") or [])[:10]
+
+        quality = 1.0 if total > 0 else 0.5
+        return {
+            "domain": domain,
+            "compromised_employees": employees,
+            "compromised_users": users,
+            "third_party_exposures": third_parties,
+            "total_compromised": total,
+            "hudson_rock_db_size": total_stealers_db,
+            "employee_urls_sample": employee_urls,
+            "client_urls_sample": client_urls,
+            "employee_url_counts": stats.get("employees_count", []),
+            "client_url_counts": stats.get("clients_count", []),
+            "_telemetry": _make_telemetry(started, quality=quality),
+        }
+    except Exception as e:
+        err = f"Hudson Rock lookup failed: {e}"
+        return {"error": err, "domain": domain,
+                "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}

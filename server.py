@@ -571,6 +571,20 @@ def research_synthesis(query: str) -> dict:
     return get_perplexity_synthesis(api_key, query)
 
 
+@mcp.tool()
+def hudson_rock(domain: str) -> dict:
+    """Check if a domain appears in infostealer logs via Hudson Rock Cavalier.
+
+    Free intelligence feed — no API key required. Returns counts of
+    compromised employees, users, and third-party exposures plus sample
+    URLs captured from stealer-infected machines.
+
+    Args:
+        domain: Target domain to check (e.g. example.com)
+    """
+    return tools.hudson_rock_domain(domain)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
