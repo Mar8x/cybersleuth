@@ -30,6 +30,7 @@ from tools import (
     search_brave,
     search_tavily,
     get_perplexity_synthesis,
+    hudson_rock_domain,
 )
 
 mcp = FastMCP(
@@ -582,7 +583,7 @@ def hudson_rock(domain: str) -> dict:
     Args:
         domain: Target domain to check (e.g. example.com)
     """
-    return tools.hudson_rock_domain(domain)
+    return hudson_rock_domain(domain)
 
 
 if __name__ == "__main__":
