@@ -53,6 +53,7 @@ _COMPANY_DDR_FILE = Path(__file__).resolve().parent / "docs" / "company-ddr.md"
 _TECH_STACK_FILE = Path(__file__).resolve().parent / "docs" / "tech-stack-recon.md"
 _LLM_RECON_FILE = Path(__file__).resolve().parent / "docs" / "llm-recon.md"
 _PRIVACY_FILE = Path(__file__).resolve().parent / "docs" / "privacy-analysis.md"
+_THREAT_SURFACE_FILE = Path(__file__).resolve().parent / "docs" / "threat-surface.md"
 
 
 def _get_skill_content() -> str:
@@ -88,6 +89,11 @@ def _get_llm_recon_content() -> str:
 def _get_privacy_content() -> str:
     """Return privacy-analysis methodology from docs/privacy-analysis.md."""
     return _PRIVACY_FILE.read_text(encoding="utf-8")
+
+
+def _get_threat_surface_content() -> str:
+    """Return threat-surface Shodan deep-recon methodology from docs/threat-surface.md."""
+    return _THREAT_SURFACE_FILE.read_text(encoding="utf-8")
 
 
 @mcp.resource("cybersleuth://instructions")
@@ -130,6 +136,12 @@ def llm_recon_resource() -> str:
 def privacy_analysis_resource() -> str:
     """Privacy & data handling analysis methodology: OPP-115 practice categories, jurisdictional compliance (GDPR/CCPA/LGPD/PIPL/PIPEDA), AI training red-flag detection, tracker risk database, contradiction patterns."""
     return _get_privacy_content()
+
+
+@mcp.resource("cybersleuth://threat-surface")
+def threat_surface_resource() -> str:
+    """Threat-surface deep-recon methodology: widen attack surface from a domain/IP/ASN/CIDR via Shodan pivot chains (favicon hash, cert CN/org, org, asn:, net:), deep enumeration of ports/products/vulns/exposed services, facet breadth, and surface tagging with depth/credit discipline."""
+    return _get_threat_surface_content()
 
 
 @mcp.prompt(title="CyberSleuth system instructions")
@@ -226,21 +238,27 @@ def favicon_hash(url: str, verify_ssl: bool = True) -> dict:
 
 
 @mcp.tool()
-def shodan_search(query: str, limit: int = 5) -> dict:
+def shodan_search(query: str, limit: int = 5, facets: str = "") -> dict:
     """Search Shodan for internet-connected devices and services.
 
     Returns matching hosts with IP, port, organization, country, domains,
-    and aggregate statistics. Supports Shodan query syntax including
-    favicon hash filters.
+    and aggregate statistics. Supports full Shodan query syntax including
+    favicon hash, ASN, netblock, org, and SSL filters — ideal for widening
+    a threat surface (see the cybersleuth://threat-surface playbook).
 
     Args:
-        query: Shodan search query (e.g. "http.favicon.hash:-123456" or "org:Example")
-        limit: Maximum number of detailed matches to return
+        query: Shodan search query (e.g. "http.favicon.hash:-123456", "org:Example",
+            "asn:AS13335", "net:185.12.0.0/22", "ssl.cert.subject.cn:example.com")
+        limit: Maximum number of detailed matches to return. Use a larger value
+            (e.g. 100-300) to deep-enumerate an ASN/netblock; >100 auto-pages and
+            consumes one Shodan query credit per 100 results.
+        facets: Optional comma-separated facet names for aggregate breakdowns across
+            the FULL result set (e.g. "port,org,product,vuln,asn") — use for breadth.
     """
     api_key = os.environ.get("SHODAN_API_KEY")
     if not api_key:
         return {"error": "SHODAN_API_KEY environment variable is not set"}
-    return search_shodan(api_key, query, limit)
+    return search_shodan(api_key, query, limit, facets or None)
 
 
 @mcp.tool()

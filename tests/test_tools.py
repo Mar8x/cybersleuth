@@ -1384,3 +1384,75 @@ class TestGetSecurityTxt:
         with patch("tools.requests.get", side_effect=requests.exceptions.ConnectionError("x")):
             result = get_security_txt("example.com")
         assert result["found"] is False
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: Mocked HTTP — Shodan deep surface search (threat-surface playbook)
+# ---------------------------------------------------------------------------
+
+class TestSearchShodanDeep:
+    SHODAN_RESULT = {
+        "total": 1234,
+        "matches": [
+            {"ip_str": "1.2.3.4", "port": 443, "org": "Acme", "product": "nginx",
+             "location": {"country_name": "US"}, "domains": ["acme.com"]},
+            {"ip_str": "1.2.3.5", "port": 3389, "org": "Acme", "product": "RDP",
+             "location": {"country_name": "US"}, "domains": []},
+        ],
+        "facets": {"port": [{"value": "443", "count": 10}, {"value": "3389", "count": 2}]},
+    }
+
+    def test_limit_forwarded_to_api(self):
+        from tools import search_shodan
+        mock_api = MagicMock()
+        mock_api.search.return_value = self.SHODAN_RESULT
+        with patch("tools.shodan.Shodan", return_value=mock_api):
+            search_shodan("key", "asn:AS13335", limit=200)
+        # limit must be passed through so the client auto-pages beyond 100 results.
+        _, kwargs = mock_api.search.call_args
+        assert kwargs.get("limit") == 200
+
+    def test_facets_requested_and_returned(self):
+        from tools import search_shodan
+        mock_api = MagicMock()
+        mock_api.search.return_value = self.SHODAN_RESULT
+        with patch("tools.shodan.Shodan", return_value=mock_api):
+            result = search_shodan("key", "net:1.2.3.0/24", limit=50, facets="port,org")
+        _, kwargs = mock_api.search.call_args
+        assert kwargs.get("facets") == ["port", "org"]
+        assert result["facets"] == self.SHODAN_RESULT["facets"]
+
+    def test_no_facets_key_null_when_not_requested(self):
+        from tools import search_shodan
+        mock_api = MagicMock()
+        mock_api.search.return_value = self.SHODAN_RESULT
+        with patch("tools.shodan.Shodan", return_value=mock_api):
+            result = search_shodan("key", "ip:1.2.3.4")
+        assert result["facets"] is None
+        assert result["matches"][0]["ip"] == "1.2.3.4"
+
+    def test_limit_bounded(self):
+        from tools import search_shodan
+        mock_api = MagicMock()
+        mock_api.search.return_value = self.SHODAN_RESULT
+        with patch("tools.shodan.Shodan", return_value=mock_api):
+            search_shodan("key", "asn:AS1", limit=999999)
+        _, kwargs = mock_api.search.call_args
+        assert kwargs.get("limit") == 1000  # capped
+
+
+class TestThreatSurfacePlaybook:
+    def test_playbook_file_exists(self):
+        from pathlib import Path
+        import tools  # noqa: F401 — anchor for repo root
+        path = Path(__file__).resolve().parent.parent / "docs" / "threat-surface.md"
+        assert path.exists(), "docs/threat-surface.md must exist"
+        text = path.read_text(encoding="utf-8")
+        assert "Threat-Surface" in text
+        # Mentions the core pivot filters the agent should use.
+        for token in ("asn:", "net:", "http.favicon.hash:", "ssl.cert.subject.cn:"):
+            assert token in text
+
+    def test_resource_registered(self):
+        import server
+        assert server._get_threat_surface_content().strip()

@@ -1107,22 +1107,38 @@ def get_favicon_hash(url: str, verify_ssl: bool = True) -> Dict:
         return {"error": str(e), '_telemetry': _make_telemetry(started, errors=[str(e)], quality=0.0)}
 
 
-def search_shodan(api_key: str, query: str, limit: int = 5) -> Dict:
+def search_shodan(api_key: str, query: str, limit: int = 5, facets=None) -> Dict:
     """
     Search Shodan with aggregated results.
 
     Args:
         api_key (str): Shodan API key
         query (str): Search query
-        limit (int): Number of detailed matches
+        limit (int): Number of detailed matches to return. Values >100 auto-page the
+            Shodan API (one query credit per 100 results) for deep surface enumeration.
+        facets: Optional comma-separated string or list of Shodan facet names
+            (e.g. "port,org,product,vuln,asn") for aggregate breakdowns across the
+            full result set — used by the threat-surface playbook for breadth.
 
     Returns:
-        Dict: Search results with stats and matches
+        Dict: Search results with stats, matches, and (when requested) facet aggregates
     """
     started = datetime.datetime.now(_UTC)
     try:
         api = shodan.Shodan(api_key)
-        results = api.search(query)
+        # Bound detailed/auto-paged matches to keep payloads and credit use sane.
+        limit = max(1, min(int(limit or 5), 1000))
+        facet_list = None
+        if facets:
+            if isinstance(facets, str):
+                facet_list = [f.strip() for f in facets.split(',') if f.strip()]
+            else:
+                facet_list = [f for f in facets if f]
+        # Pass limit so the client auto-pages beyond the first 100 results when asked.
+        if facet_list:
+            results = api.search(query, limit=limit, facets=facet_list)
+        else:
+            results = api.search(query, limit=limit)
 
         # Get countries from valid results
         countries = collections.Counter()
@@ -1164,6 +1180,8 @@ def search_shodan(api_key: str, query: str, limit: int = 5) -> Dict:
                 "organizations": organizations.most_common(5),
                 "ports": ports.most_common(5)
             },
+            # Full-result-set aggregates when facets were requested (deep surface breadth).
+            "facets": results.get('facets') if facet_list else None,
             '_telemetry': _make_telemetry(started, quality=1.0),
         }
     except shodan.APIError as e:
