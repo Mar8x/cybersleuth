@@ -1190,6 +1190,92 @@ def search_shodan(api_key: str, query: str, limit: int = 5, facets=None) -> Dict
         return {"error": f"Error during Shodan search: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Error during Shodan search: {str(e)}"], quality=0.0)}
 
 
+def get_shodan_domain(api_key: str, domain: str, limit: int = 10) -> Dict:
+    """
+    High-signal Shodan search for a DOMAIN: the union of `hostname:<domain>` and
+    `ssl.cert.subject.cn:<domain>`, merged and de-duplicated by (ip, port).
+
+    Why not search the resolved apex IP? For shared hosting / CDN / parked domains the
+    apex IP belongs to the provider, so `ip:<apex>` returns provider noise and unrelated
+    co-tenants while missing the org's real (distributed) infrastructure. Hostname + cert
+    queries find the org's actual hosts — and the cert query in particular catches hosts
+    (e.g. domain-joined machines with exposed RDP) that the hostname query misses.
+
+    Args:
+        api_key: Shodan API key
+        domain: Domain to search (e.g. example.com)
+        limit: Max detailed matches per sub-query
+
+    Returns:
+        Dict with merged matches (each annotated with `matched_by`), per-query totals, and stats.
+    """
+    started = datetime.datetime.now(_UTC)
+    queries = {
+        "hostname": f"hostname:{domain}",
+        "cert": f"ssl.cert.subject.cn:{domain}",
+    }
+    try:
+        api = shodan.Shodan(api_key)
+        limit = max(1, min(int(limit or 10), 200))
+
+        merged: Dict = {}
+        query_totals: Dict = {}
+        for label, q in queries.items():
+            try:
+                results = api.search(q, limit=limit)
+            except shodan.APIError as e:
+                query_totals[label] = f"error: {e}"
+                continue
+            query_totals[label] = results.get('total', 0)
+            for host in results.get('matches', [])[:limit]:
+                ip = host.get('ip_str', 'Unknown')
+                port = host.get('port', 'Unknown')
+                key = (ip, port)
+                if key in merged:
+                    if label not in merged[key]["matched_by"]:
+                        merged[key]["matched_by"].append(label)
+                    continue
+                merged[key] = {
+                    "ip": ip,
+                    "port": port,
+                    "org": host.get('org', 'Unknown'),
+                    "country": host.get('location', {}).get('country_name', 'Unknown'),
+                    "domains": host.get('domains', []),
+                    "hostnames": host.get('hostnames', []),
+                    "product": host.get('product', 'Unknown'),
+                    "version": host.get('version', 'Unknown'),
+                    "data": host.get('data', '').strip()[:500],
+                    "matched_by": [label],
+                }
+
+        matches = list(merged.values())
+        countries = collections.Counter()
+        organizations = collections.Counter()
+        ports = collections.Counter()
+        for m in matches:
+            countries[m["country"]] += 1
+            organizations[m["org"]] += 1
+            ports[m["port"]] += 1
+
+        return {
+            "domain": domain,
+            "queries": queries,
+            "query_totals": query_totals,
+            "total_results": len(matches),
+            "matches": matches,
+            "stats": {
+                "countries": countries.most_common(5),
+                "organizations": organizations.most_common(5),
+                "ports": ports.most_common(5),
+            },
+            '_telemetry': _make_telemetry(started, quality=1.0 if matches else 0.5),
+        }
+    except shodan.APIError as e:
+        return {"error": f"Shodan API error: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Shodan API error: {str(e)}"], quality=0.0)}
+    except Exception as e:
+        return {"error": f"Error during Shodan domain search: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Error during Shodan domain search: {str(e)}"], quality=0.0)}
+
+
 def search_urlscan_history(url: str, api_key: str, limit: int = 10) -> Dict:
     """
     Search URLScan.io's historical data.
@@ -3014,6 +3100,7 @@ __all__ = [
     # Core functionality
     'get_favicon_hash',
     'search_shodan',
+    'get_shodan_domain',
     'search_urlscan_history',
     'scan_url',
     'get_whois_info',

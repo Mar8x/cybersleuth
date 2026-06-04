@@ -1441,6 +1441,58 @@ class TestSearchShodanDeep:
         assert kwargs.get("limit") == 1000  # capped
 
 
+class TestShodanDomain:
+    # hostname query finds host A; cert query finds host A again + host B (cert-only, e.g. RDP).
+    HOSTNAME_RESULT = {
+        "total": 1,
+        "matches": [
+            {"ip_str": "10.0.0.1", "port": 443, "org": "Acme", "product": "nginx",
+             "location": {"country_name": "SE"}, "hostnames": ["www.acme.se"]},
+        ],
+    }
+    CERT_RESULT = {
+        "total": 2,
+        "matches": [
+            {"ip_str": "10.0.0.1", "port": 443, "org": "Acme", "product": "nginx",
+             "location": {"country_name": "SE"}, "hostnames": ["www.acme.se"]},
+            {"ip_str": "10.0.0.2", "port": 3389, "org": "Tele2", "product": "RDP",
+             "location": {"country_name": "SE"}, "hostnames": ["laptop.acme.se"]},
+        ],
+    }
+
+    def test_merges_hostname_and_cert_queries(self):
+        from tools import get_shodan_domain
+        mock_api = MagicMock()
+        # query order in the tool: hostname, then cert.
+        mock_api.search.side_effect = [self.HOSTNAME_RESULT, self.CERT_RESULT]
+        with patch("tools.shodan.Shodan", return_value=mock_api):
+            r = get_shodan_domain("key", "acme.se")
+
+        # both sub-queries issued
+        assert mock_api.search.call_count == 2
+        # de-duplicated by (ip, port): 10.0.0.1:443 once + 10.0.0.2:3389 once
+        keys = {(m["ip"], m["port"]) for m in r["matches"]}
+        assert keys == {("10.0.0.1", 443), ("10.0.0.2", 3389)}
+        assert r["total_results"] == 2
+        # the shared host is matched_by both; the cert-only RDP host is cert-only
+        by_ip = {m["ip"]: m for m in r["matches"]}
+        assert set(by_ip["10.0.0.1"]["matched_by"]) == {"hostname", "cert"}
+        assert by_ip["10.0.0.2"]["matched_by"] == ["cert"]  # caught only by the cert query
+
+    def test_query_strings(self):
+        from tools import get_shodan_domain
+        mock_api = MagicMock()
+        mock_api.search.side_effect = [self.HOSTNAME_RESULT, self.CERT_RESULT]
+        with patch("tools.shodan.Shodan", return_value=mock_api):
+            r = get_shodan_domain("key", "acme.se")
+        assert r["queries"]["hostname"] == "hostname:acme.se"
+        assert r["queries"]["cert"] == "ssl.cert.subject.cn:acme.se"
+
+    def test_in_all_and_server_tool(self):
+        import tools
+        assert "get_shodan_domain" in tools.__all__
+
+
 class TestThreatSurfacePlaybook:
     def test_playbook_file_exists(self):
         from pathlib import Path

@@ -15,7 +15,7 @@ spans multiple IPs, netblocks, and autonomous systems.
 
 | Seed type | First moves |
 |-----------|-------------|
-| **domain** | Resolve to IPs (`dns_records`), grab the cert (`certificate_info`) for CN/org/SAN, compute `favicon_hash`. Then Shodan: `hostname:<domain>`, `ssl.cert.subject.cn:<domain>`, `http.favicon.hash:<hash>`. |
+| **domain** | Lead with **`shodan_domain`** — it runs `hostname:<domain>` ∪ `ssl.cert.subject.cn:<domain>` (the high-signal union; the cert query catches domain-joined boxes with exposed RDP that hostname misses). **Do not search the resolved apex IP** — for shared hosting / CDN / parked domains the apex belongs to the provider, returning provider noise + unrelated co-tenants. Also `certificate_info` for CN/org/SAN, `favicon_hash` → `http.favicon.hash:<hash>`. Resolve A/AAAA + subdomains, but only `ip:`/`net:` IPs confirmed to belong to the org (its own ASN/org from `as_intelligence`). |
 | **ip** | `shodan_search` with `ip:<ip>` for that host's services, then sweep the neighborhood: `net:<ip>/24`. Pull PTR (`reverse_dns`) and the cert org for pivots. |
 | **asn** | `shodan_search` with `asn:AS<number>` (deep `limit`) to enumerate the whole AS. Use `as_intelligence` for the org name and announced prefixes, then sweep each prefix with `net:`. |
 | **range / CIDR** | `shodan_search` with `net:<cidr>` (deep `limit`). Facet on `port`/`product`/`org` to profile the block, then drill into the interesting hosts. |

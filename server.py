@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from tools import (
     get_favicon_hash,
     search_shodan,
+    get_shodan_domain,
     search_urlscan_history,
     scan_url,
     get_whois_info,
@@ -259,6 +260,29 @@ def shodan_search(query: str, limit: int = 5, facets: str = "") -> dict:
     if not api_key:
         return {"error": "SHODAN_API_KEY environment variable is not set"}
     return search_shodan(api_key, query, limit, facets or None)
+
+
+@mcp.tool()
+def shodan_domain(domain: str, limit: int = 10) -> dict:
+    """High-signal Shodan search for a DOMAIN — the union of hostname and TLS-cert queries.
+
+    Runs `hostname:<domain>` and `ssl.cert.subject.cn:<domain>` and merges the results
+    (de-duplicated by ip:port, each annotated with `matched_by`). This is the recommended
+    entry point for a domain: do NOT search the resolved apex IP — for shared hosting / CDN /
+    parked domains the apex belongs to the provider, returning provider noise and unrelated
+    co-tenants while missing the org's real infrastructure. The cert query also catches hosts
+    (e.g. domain-joined machines with exposed RDP) that the hostname query misses.
+
+    For an IP / ASN / CIDR, use `shodan_search` with `ip:` / `asn:` / `net:` instead.
+
+    Args:
+        domain: Domain to search (e.g. example.com)
+        limit: Max detailed matches per sub-query
+    """
+    api_key = os.environ.get("SHODAN_API_KEY")
+    if not api_key:
+        return {"error": "SHODAN_API_KEY environment variable is not set"}
+    return get_shodan_domain(api_key, domain, limit)
 
 
 @mcp.tool()
