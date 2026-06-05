@@ -71,7 +71,8 @@
 
 **Analysis:**
 - Do DNS records point to known hosting providers?
-- Are there dangling CNAME records (subdomain takeover risk)?
+- Are there dangling CNAME records (subdomain takeover risk)? — `thc_recon`'s reverse-CNAME
+  complements this by surfacing *other* domains that point at this one (shared infra / customers).
 - What security records exist (SPF, DMARC, DKIM)?
 - Has the domain changed hosting frequently?
 
@@ -82,10 +83,13 @@
 **Execute multiple enumeration techniques:**
 
 1. **Certificate Transparency (CertSpotter + Censys)** — All certificates ever issued for the domain
-2. **DNS brute-force (subfinder)** — Common subdomain wordlists
-3. **Passive DNS (SecurityTrails)** — Historical subdomain records
-4. **DNS aggregator (DNSDumpster)** — Combined passive intelligence
-5. **Amass passive** — Multi-source subdomain enumeration
+2. **Passive DNS (`thc_recon`)** — ip.thc.org passive subdomains **and** reverse-CNAME (domains that
+   CNAME *to* this one — pivot to related/customer infra). Rate-limited (~0.5 req/s) and first-page
+   only — run it once on the apex, not per-subdomain.
+3. **DNS brute-force (subfinder)** — Common subdomain wordlists
+4. **Passive DNS (SecurityTrails)** — Historical subdomain records
+5. **DNS aggregator (DNSDumpster)** — Combined passive intelligence
+6. **Amass passive** — Multi-source subdomain enumeration
 
 **For each discovered subdomain:**
 - Resolve to IP address
@@ -94,7 +98,7 @@
 - Note any interesting naming patterns (dev, staging, admin, api, vpn, mail)
 
 **Quality Gate:**
-- [ ] All 5 enumeration techniques executed
+- [ ] All enumeration techniques executed (CT, `thc_recon` passive DNS, brute-force, aggregators)
 - [ ] Results deduplicated and merged
 - [ ] Each subdomain resolved and status checked
 - [ ] 95%+ confidence in subdomain coverage

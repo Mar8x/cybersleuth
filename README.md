@@ -13,7 +13,7 @@ CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes 25 cyber-in
 
 ## Features
 
-- **Infrastructure Analysis** — favicon hash generation, DNS enumeration, WHOIS investigation, reverse DNS, AS intelligence with hosting/cloud detection
+- **Infrastructure Analysis** — favicon hash generation, DNS enumeration, WHOIS investigation, reverse DNS, AS intelligence with hosting/cloud detection, passive DNS via ip.thc.org (reverse-IP hostnames, reverse-CNAME, passive subdomains)
 - **Certificate Intelligence** — SSL/TLS certificate history via CertSpotter + Censys (CT log aggregation), subdomain discovery, CA tracking
 - **Security Contact Discovery** — security.txt lookup (RFC 9116): contact, policy, encryption key, expiry check
 - **Web Analysis** — URLScan.io scanning and historical data, BuiltWith technology lookup (free API)
@@ -144,6 +144,7 @@ The `docs/` directory contains standalone reference guides:
 | `whois_lookup` | WHOIS registration data for a domain or IP (RIR-aware for IPs, TLD fallback; optional `server=`) |
 | `dns_records` | DNS enumeration (A, AAAA, MX, NS, TXT, SOA, CNAME, PTR, SRV, CAA) |
 | `reverse_dns` | Reverse DNS lookup for an IP address |
+| `thc_recon` | Passive DNS via ip.thc.org — domain: reverse-CNAME (who CNAMEs to it) + passive subdomains; IP: passive reverse-IP hostnames + ASN/org (fills gaps when live PTR is empty). No key; rate-limited ~0.5 req/s |
 | `as_intelligence` | ASN, AS org, country, and hosting/cloud classification for an IP or domain |
 
 ### Certificate & Web
@@ -211,7 +212,7 @@ The `docs/` directory contains standalone reference guides:
 ┌─────────────────────────────────────────┼────────────────────┐
 │  YOUR LOCAL MACHINE                     │                    │
 │  ┌──────────────────────────────────────▼─────────────────┐  │
-│  │  server.py (MCP Server — 25 tools, 7 resources)        │  │
+│  │  server.py (MCP Server — 29 tools, 7 resources)        │  │
 │  │  └── tools.py (OSINT + research functions)             │  │
 │  └──────────────────────┬─────────────────────────────────┘  │
 │                         │                                    │
@@ -227,7 +228,7 @@ The `docs/` directory contains standalone reference guides:
 │  External APIs (HTTPS)                                       │
 │  CertSpotter · Censys · Shodan · URLScan.io · BuiltWith ·    │
 │  VirusTotal · Brave Search · Tavily · Perplexity ·           │
-│  WHOIS · DNS · GitHub · IPinfo                               │
+│  WHOIS · DNS · ip.thc.org · GitHub · IPinfo                  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -242,6 +243,7 @@ The `docs/` directory contains standalone reference guides:
 - Research: [Tavily](https://tavily.com)
 - AI synthesis: [Perplexity](https://www.perplexity.ai)
 - DNS: Public DNS services
+- Passive DNS / reverse-IP / CNAME: [ip.thc.org](https://ip.thc.org) (no key; rate-limited ~0.5 req/s)
 - WHOIS: Public WHOIS servers (RIR- and TLD-aware)
 - Ransomware victim listings: [ransomware.live](https://www.ransomware.live) (manual web fetch)
 
