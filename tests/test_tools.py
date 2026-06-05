@@ -1508,3 +1508,116 @@ class TestThreatSurfacePlaybook:
     def test_resource_registered(self):
         import server
         assert server._get_threat_surface_content().strip()
+
+
+# ---------------------------------------------------------------------------
+# THC ip.thc.org passive-DNS recon (mocked)
+# ---------------------------------------------------------------------------
+
+def _mock_text_response(text: str, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.reason = "OK" if status == 200 else "Error"
+    resp.text = text
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+_THC_IP_TEXT = (
+    ";ASN    : 15169 [https://bgpview.io/asn/15169]\n"
+    ";Org    : GOOGLE\n"
+    ";City   : N/A\n"
+    ";Country: United States\n"
+    ";GPS    : 37.751000,-97.822000 [https://maps.google.com/?q=37.751,-97.822]\n"
+    ";IP     : 8.8.8.8\n"
+    ";;Entries: 100/39400 [https://ip.thc.org/8.8.8.8?f=abc to filter]\n"
+    ";;Rate Limit: You can make 249 requests (Replenishes at 0.50/sec)\n"
+    "dns.google\n"
+    "resolver.example\n"
+)
+
+_THC_CNAME_TEXT = (
+    ";;Domains Pointing To: cdn.example.com\n"
+    ";;Entries: 2/2\n"
+    ";;Rate Limit: You can make 248 requests (Replenishes at 0.50/sec)\n"
+    "shop.acme.se\n"
+    "www.acme.se\n"
+)
+
+_THC_SUBS_TEXT = (
+    ";;Subdomains For: acme.se\n"
+    ";;Entries: 3/57\n"
+    ";;Rate Limit: You can make 247 requests (Replenishes at 0.50/sec)\n"
+    "acme.se\n"
+    "mail.acme.se\n"
+    "vpn.acme.se\n"
+)
+
+_THC_EMPTY_TEXT = (
+    ";;Domains Pointing To: nobody.example\n"
+    ";;Entries: 0/0\n"
+    ";;Rate Limit: You can make 249 requests (Replenishes at 0.50/sec)\n"
+    ";;We could not find any domains for nobody.example\n"
+)
+
+
+class TestThcReconMocked:
+    def setup_method(self):
+        import tools
+        tools._thc_last = 0.0  # reset throttle so tests don't sleep
+
+    def test_ip_parses_asn_and_hostnames(self):
+        import tools
+        with patch("tools.requests.get", return_value=_mock_text_response(_THC_IP_TEXT)):
+            r = tools.get_thc_recon("8.8.8.8")
+        assert r["kind"] == "ip"
+        assert r["asn"] == "15169" and r["org"] == "GOOGLE" and r["country"] == "United States"
+        assert "dns.google" in r["reverse_hostnames"]
+        assert r["reverse_total"] == 39400
+        assert r["_telemetry"]["quality"] == 1.0
+
+    def test_domain_cname_and_subdomains(self):
+        import tools
+        # two calls: /cn/<d> then /<d>
+        with patch("tools.requests.get", side_effect=[
+            _mock_text_response(_THC_CNAME_TEXT),
+            _mock_text_response(_THC_SUBS_TEXT),
+        ]):
+            r = tools.get_thc_recon("acme.se")
+        assert r["kind"] == "domain"
+        assert "shop.acme.se" in r["cname_pointers"] and "www.acme.se" in r["cname_pointers"]
+        assert "mail.acme.se" in r["subdomains"]
+        assert r["subdomains_total"] == 57
+        assert r["_telemetry"]["quality"] == 1.0
+
+    def test_domain_empty_is_benign(self):
+        import tools
+        with patch("tools.requests.get", side_effect=[
+            _mock_text_response(_THC_EMPTY_TEXT),
+            _mock_text_response(_THC_EMPTY_TEXT),
+        ]):
+            r = tools.get_thc_recon("nobody.example")
+        assert r["cname_pointers"] == [] and r["subdomains"] == []
+        assert "error" not in r
+        assert r["_telemetry"]["quality"] == 0.5   # nothing found → empty, not a failure
+
+    def test_cap_limits_entries(self):
+        import tools
+        big = _THC_IP_TEXT + "\n".join(f"h{i}.example" for i in range(500))
+        with patch("tools.requests.get", return_value=_mock_text_response(big)):
+            r = tools.get_thc_recon("8.8.8.8", max_entries=10)
+        assert len(r["reverse_hostnames"]) == 10
+
+    def test_rate_limited_429(self):
+        import tools
+        with patch("tools.requests.get", return_value=_mock_text_response("", status=429)):
+            r = tools.get_thc_recon("8.8.8.8")
+        assert "error" in r and "rate limit" in r["error"].lower()
+        assert r["_telemetry"]["quality"] == 0.0
+
+    def test_network_error(self):
+        import tools, requests
+        with patch("tools.requests.get", side_effect=requests.exceptions.ConnectionError("offline")):
+            r = tools.get_thc_recon("8.8.8.8")
+        assert "error" in r and "THC lookup failed" in r["error"]
+        assert r["_telemetry"]["quality"] == 0.0

@@ -33,6 +33,7 @@ from tools import (
     get_perplexity_synthesis,
     hudson_rock_domain,
     get_email_auth,
+    get_thc_recon,
 )
 
 mcp = FastMCP(
@@ -190,6 +191,24 @@ def reverse_dns(ip: str) -> dict:
         ip: IP address to look up
     """
     return reverse_dns_lookup(ip)
+
+
+@mcp.tool()
+def thc_recon(target: str) -> dict:
+    """Passive-DNS recon via ip.thc.org (CNAME, subdomains, reverse-IP).
+
+    Complements live DNS with passive/historical data — especially useful when reverse_dns
+    finds no PTR, or to pivot on CNAME relationships:
+      - IP target  → ASN/org/geo + passive reverse-IP hostnames (domains that resolved here).
+      - Domain target → reverse-CNAME (domains that CNAME to it) + passive subdomains.
+
+    Slow and rate-limited (the service allows ~0.5 requests/sec) — requests are throttled to
+    >= 2s apart and results are first-page only (totals are reported separately). No API key.
+
+    Args:
+        target: a domain or an IP address.
+    """
+    return get_thc_recon(target)
 
 
 @mcp.tool()
