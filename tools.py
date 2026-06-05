@@ -1293,6 +1293,8 @@ def search_shodan(api_key: str, query: str, limit: int = 5, facets=None) -> Dict
                     "hostnames": host.get('hostnames', []),
                     "product": host.get('product', 'Unknown'),
                     "version": host.get('version', 'Unknown'),
+                    # Known CVEs for this service (when Shodan has vuln data) — sorted list of CVE ids.
+                    "vulns": sorted(host['vulns'].keys()) if isinstance(host.get('vulns'), dict) else (host.get('vulns') or []),
                     # Limit data length
                     "data": host.get('data', '').strip()[:500]
                 }
@@ -1367,6 +1369,7 @@ def get_shodan_domain(api_key: str, domain: str, limit: int = 10) -> Dict:
                     "hostnames": host.get('hostnames', []),
                     "product": host.get('product', 'Unknown'),
                     "version": host.get('version', 'Unknown'),
+                    "vulns": sorted(host['vulns'].keys()) if isinstance(host.get('vulns'), dict) else (host.get('vulns') or []),
                     "data": host.get('data', '').strip()[:500],
                     "matched_by": [label],
                 }
