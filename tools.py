@@ -5,6 +5,7 @@ import socket
 import datetime
 import ipaddress
 import re
+import threading
 import time
 from typing import Dict, List, Optional
 from urllib.parse import urljoin
@@ -784,6 +785,128 @@ def reverse_dns_lookup(ip: str) -> Dict:
         return {"error": f"Invalid IP address: {ip}", '_telemetry': _make_telemetry(started, errors=[f"Invalid IP address: {ip}"], quality=0.0)}
     except Exception as e:
         return {"error": f"Reverse DNS lookup failed: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Reverse DNS lookup failed: {str(e)}"], quality=0.0)}
+
+
+# ---------------------------------------------------------------------------
+# THC ip.thc.org passive DNS recon (CNAME / subdomains / reverse-IP)
+# ---------------------------------------------------------------------------
+# The service returns colorized PLAINTEXT (ANSI), path-based, no API key. Every response carries
+# ";;Rate Limit: You can make N requests (Replenishes at 0.50/sec)". We honour 0.5 req/s by spacing
+# requests >= 2s apart via a process-wide throttle (FastMCP runs sync tools in a threadpool).
+
+_THC_BASE = "https://ip.thc.org"
+_THC_MIN_INTERVAL = 2.0          # 0.5 req/s
+_THC_UA = "cybersleuth-osint/1.0"
+_THC_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_thc_lock = threading.Lock()
+_thc_last = 0.0
+
+
+def _strip_ansi(s: str) -> str:
+    return _THC_ANSI_RE.sub("", s)
+
+
+def _thc_get(path: str):
+    """Throttled GET to ip.thc.org. Returns (status, text, remaining): status ∈ ok|ratelimited."""
+    global _thc_last
+    with _thc_lock:
+        wait = _THC_MIN_INTERVAL - (time.monotonic() - _thc_last)
+        if wait > 0:
+            time.sleep(wait)
+        _thc_last = time.monotonic()
+    resp = requests.get(_THC_BASE + path, timeout=20, headers={"User-Agent": _THC_UA})
+    if resp.status_code == 429:
+        return "ratelimited", "", 0
+    resp.raise_for_status()
+    text = _strip_ansi(resp.text)
+    m = re.search(r"You can make\s+(\d+)\s+requests", text)
+    return "ok", text, (int(m.group(1)) if m else None)
+
+
+def _thc_entries(text: str, cap: int) -> List[str]:
+    """Entry lines (hostnames/domains) from a THC response — skips ;-metadata and prose, capped."""
+    out: List[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(";") or " " in line:  # metadata / prose ("We could not find…")
+            continue
+        out.append(line.rstrip(".").lower())
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _thc_total(text: str):
+    m = re.search(r";;Entries:\s*\d+/(\d+)", text)
+    return int(m.group(1)) if m else None
+
+
+def _thc_kv(text: str) -> Dict[str, str]:
+    """Parse the IP header lines (`;ASN : 15169 [link]`, `;Org : …`, …)."""
+    out: Dict[str, str] = {}
+    for line in text.splitlines():
+        if line.startswith(";") and not line.startswith(";;") and ":" in line:
+            k, _, v = line[1:].partition(":")
+            v = re.sub(r"\s*\[.*?\]\s*$", "", v.strip()).strip()  # drop trailing [https://…] annotation
+            if k.strip():
+                out[k.strip()] = v
+    return out
+
+
+def get_thc_recon(target: str, max_entries: int = 200) -> Dict:
+    """Passive-DNS recon via ip.thc.org.
+
+    IP → ASN/org/geo + passive reverse-IP hostnames (useful when live PTR is empty).
+    Domain → reverse-CNAME (domains that CNAME to it) + passive subdomains.
+    Rate-limited to 0.5 req/s; results are first-page only (totals reported separately).
+    """
+    started = datetime.datetime.now(_UTC)
+    target = (target or "").strip().lower().rstrip(".")
+    if not target:
+        return {"error": "empty target", "_telemetry": _make_telemetry(started, errors=["empty target"], quality=0.0)}
+
+    try:
+        ipaddress.ip_address(target)
+        is_ip = True
+    except ValueError:
+        is_ip = False
+
+    try:
+        if is_ip:
+            status, text, remaining = _thc_get(f"/{target}")
+            if status == "ratelimited":
+                return {"target": target, "kind": "ip", "error": "THC rate limit reached",
+                        "_telemetry": _make_telemetry(started, errors=["THC rate limit reached"], quality=0.0)}
+            meta = _thc_kv(text)
+            hosts = _thc_entries(text, max_entries)
+            return {
+                "target": target, "kind": "ip",
+                "asn": meta.get("ASN") or None, "org": meta.get("Org") or None,
+                "city": meta.get("City") or None, "country": meta.get("Country") or None,
+                "gps": meta.get("GPS") or None,
+                "reverse_hostnames": hosts, "reverse_total": _thc_total(text),
+                "rate_remaining": remaining,
+                "_telemetry": _make_telemetry(started, quality=1.0 if hosts else 0.5),
+            }
+
+        # domain: reverse-CNAME + subdomains (two throttled calls, ≥2s apart)
+        st1, t1, r1 = _thc_get(f"/cn/{target}")
+        cname = _thc_entries(t1, max_entries) if st1 == "ok" else []
+        st2, t2, r2 = _thc_get(f"/{target}")
+        subs = _thc_entries(t2, max_entries) if st2 == "ok" else []
+        if st1 == "ratelimited" and st2 == "ratelimited":
+            return {"target": target, "kind": "domain", "error": "THC rate limit reached",
+                    "_telemetry": _make_telemetry(started, errors=["THC rate limit reached"], quality=0.0)}
+        return {
+            "target": target, "kind": "domain",
+            "cname_pointers": cname, "cname_total": _thc_total(t1) if st1 == "ok" else None,
+            "subdomains": subs, "subdomains_total": _thc_total(t2) if st2 == "ok" else None,
+            "rate_remaining": r2 if r2 is not None else r1,
+            "_telemetry": _make_telemetry(started, quality=1.0 if (cname or subs) else 0.5),
+        }
+    except requests.exceptions.RequestException as e:
+        err = f"THC lookup failed: {str(e)}"
+        return {"target": target, "error": err, "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
 
 
 # Known hosting/cloud provider names (substring match, case-insensitive) for AS classification.
@@ -3106,6 +3229,7 @@ __all__ = [
     'get_whois_info',
     'get_dns_records',
     'reverse_dns_lookup',
+    'get_thc_recon',
     'get_certificate_info',
     'get_builtwith_free',
     'get_vt_domain_report',
