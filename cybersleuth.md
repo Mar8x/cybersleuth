@@ -189,6 +189,8 @@ For full report methodology, structure templates, eisvogel frontmatter, and form
 
 - "Analyze certificates for domain.com"
 - "Find subdomains from certificates for domain.com"
+- "Find passive subdomains and reverse-CNAMEs for domain.com via ip.thc.org (`thc_recon`)"
+- "Get passive reverse-IP hostnames for 1.2.3.4 with `thc_recon` when `reverse_dns`/PTR returns nothing"
 - "Get the favicon hash for example.com and search Shodan for matching hosts"
 - "Run a full DNS enumeration on domain.com"
 - "Get AS intelligence for 1.2.3.4 or for domain.com — is it hosting or the real org?"

@@ -63,6 +63,8 @@ Use these specific sources per investigation phase:
 
 **Geolocation & Attribution:**
 - IPinfo (location, ASN, organization)
+- `thc_recon` (ip.thc.org) — ASN/org + **passive reverse-IP hostnames** (domains that resolved here);
+  use it especially when live `reverse_dns`/PTR returns nothing. Rate-limited (~0.5 req/s), first page.
 - Hurricane Electric BGP Toolkit (routing, peers)
 - RIPE Stat (network statistics)
 
@@ -127,7 +129,8 @@ Use these specific sources per investigation phase:
 
 **Pivot Points:**
 - WHOIS email → Other domains
-- IP address → Other hosted domains
+- IP address → Other hosted domains (`thc_recon` passive reverse-IP surfaces the shared-IP / co-hosted set)
+- Domain → Other domains pointing at it via CNAME (`thc_recon` reverse-CNAME)
 - Name servers → All hosted domains
 - Certificate details → Similar certs
 
