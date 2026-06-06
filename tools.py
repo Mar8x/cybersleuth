@@ -146,23 +146,37 @@ def get_certificate_info(domain: str, include_expired: bool = False, wildcard: b
     errors: Dict = {}
     sources_used: List[str] = []
 
-    # Primary: crt.sh — free, no key, reliable. Smart fallback: CertSpotter (whose keyless free tier is
-    # heavily rate-limited → 4xx/429) is only attempted when crt.sh fails, or when a key makes it worth it.
-    # Censys adds coverage when credentials are present. The call succeeds if ANY source returns.
-    raw_crtsh, crt_err = _query_crtsh(domain, include_subdomains=wildcard)
-    if crt_err:
-        errors['crtsh'] = crt_err
-    else:
-        sources_used.append('crtsh')
-
+    # Source selection (succeed if ANY returns):
+    #  - With a CERTSPOTTER_API_KEY → CertSpotter is reliable + fast → primary; crt.sh only as a fallback.
+    #  - Without a key → crt.sh (free) primary with retry; keyless CertSpotter (429-prone) only on failure.
+    # Censys is added whenever credentials are present.
     cs_key = os.environ.get('CERTSPOTTER_API_KEY')
+    raw_crtsh: list = []
     raw_certspotter: list = []
-    if crt_err or cs_key:
+    if cs_key:
         raw_certspotter, cs_err = _query_certspotter(domain, include_subdomains=wildcard, api_key=cs_key)
         if cs_err:
             errors['certspotter'] = cs_err
         else:
             sources_used.append('certspotter')
+        if cs_err:  # fall back to crt.sh only if keyed CertSpotter failed
+            raw_crtsh, crt_err = _query_crtsh(domain, include_subdomains=wildcard)
+            if crt_err:
+                errors['crtsh'] = crt_err
+            else:
+                sources_used.append('crtsh')
+    else:
+        raw_crtsh, crt_err = _query_crtsh(domain, include_subdomains=wildcard)
+        if crt_err:
+            errors['crtsh'] = crt_err
+        else:
+            sources_used.append('crtsh')
+        if crt_err:  # keyless CertSpotter is heavily rate-limited; only try when crt.sh failed
+            raw_certspotter, cs_err = _query_certspotter(domain, include_subdomains=wildcard, api_key=None)
+            if cs_err:
+                errors['certspotter'] = cs_err
+            else:
+                sources_used.append('certspotter')
 
     # Censys — only attempted when credentials are present
     censys_id = os.environ.get('CENSYS_API_ID')
