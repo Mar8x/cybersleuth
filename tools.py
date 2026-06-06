@@ -95,22 +95,33 @@ def _query_censys(domain: str, api_id: str, api_secret: str) -> tuple:
         return [], str(e)
 
 
-def _query_crtsh(domain: str, include_subdomains: bool) -> tuple:
-    """Query crt.sh Certificate Transparency search (free, no API key). Returns (certs, error_or_None)."""
+def _query_crtsh(domain: str, include_subdomains: bool, attempts: int = 3) -> tuple:
+    """Query crt.sh Certificate Transparency search (free, no API key). Returns (certs, error_or_None).
+
+    crt.sh frequently returns transient 502/503/504/429 under load — retry those with backoff before
+    giving up (the caller then falls back to CertSpotter/Censys)."""
     q = f"%.{domain}" if include_subdomains else domain
-    try:
-        resp = requests.get(
-            'https://crt.sh/',
-            params={'q': q, 'output': 'json'},
-            headers={'User-Agent': 'CyberSleuth/1.0'},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        return resp.json(), None
-    except ValueError as e:  # crt.sh occasionally returns an empty / non-JSON body
-        return [], f'crt.sh non-JSON response: {e}'
-    except requests.exceptions.RequestException as e:
-        return [], str(e)
+    last_err = 'crt.sh failed'
+    for attempt in range(max(1, attempts)):
+        try:
+            resp = requests.get(
+                'https://crt.sh/',
+                params={'q': q, 'output': 'json'},
+                headers={'User-Agent': 'CyberSleuth/1.0'},
+                timeout=30,
+            )
+            if resp.status_code in (429, 500, 502, 503, 504):
+                last_err = f'crt.sh {resp.status_code} (transient)'
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            return resp.json(), None
+        except ValueError as e:  # empty / non-JSON body
+            return [], f'crt.sh non-JSON response: {e}'
+        except requests.exceptions.RequestException as e:
+            last_err = str(e)
+            time.sleep(1.0 * (attempt + 1))
+    return [], last_err
 
 
 def get_certificate_info(domain: str, include_expired: bool = False, wildcard: bool = True) -> Dict:
