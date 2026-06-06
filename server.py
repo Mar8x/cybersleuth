@@ -48,6 +48,36 @@ mcp = FastMCP(
     ],
 )
 
+# All tools below are synchronous (blocking I/O). FastMCP runs sync tools directly on the event loop,
+# which serializes every concurrent request on a single process. Override `@mcp.tool()` so each sync tool
+# is dispatched to a worker thread (anyio) — concurrent tool calls then run in parallel instead of head-of-
+# line blocking each other. functools.wraps preserves the signature/name/doc so the MCP schema is identical.
+import functools as _functools
+import inspect as _inspect
+
+import anyio as _anyio
+
+_orig_tool = mcp.tool
+
+
+def _threaded_tool(*targs, **tkwargs):
+    register = _orig_tool(*targs, **tkwargs)
+
+    def wrap(fn):
+        if _inspect.iscoroutinefunction(fn):
+            return register(fn)
+
+        @_functools.wraps(fn)
+        async def _async(*a, **k):
+            return await _anyio.to_thread.run_sync(_functools.partial(fn, *a, **k))
+
+        return register(_async)
+
+    return wrap
+
+
+mcp.tool = _threaded_tool
+
 _SKILL_FILE = Path(__file__).resolve().parent / "cybersleuth.md"
 _REPORTS_FILE = Path(__file__).resolve().parent / "reports.md"
 _PEOPLE_FILE = Path(__file__).resolve().parent / "people-osint.md"

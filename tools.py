@@ -1257,6 +1257,10 @@ def search_shodan(api_key: str, query: str, limit: int = 5, facets=None) -> Dict
                 facet_list = [f.strip() for f in facets.split(',') if f.strip()]
             else:
                 facet_list = [f for f in facets if f]
+            # The `vuln` facet is restricted to paid/academic Shodan accounts and otherwise raises
+            # "The vuln filter is only available to academic users" — drop it for free-tier keys.
+            if facet_list:
+                facet_list = [f for f in facet_list if f.split(':', 1)[0].lower() != 'vuln'] or None
         # Pass limit so the client auto-pages beyond the first 100 results when asked.
         if facet_list:
             results = api.search(query, limit=limit, facets=facet_list)
