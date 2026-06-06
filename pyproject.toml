@@ -14,6 +14,7 @@ dependencies = [
     "shodan",
     "beautifulsoup4",
     "urllib3",
+    "dnstwist",
 ]
 
 [project.optional-dependencies]

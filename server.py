@@ -33,6 +33,7 @@ from tools import (
     get_perplexity_synthesis,
     hudson_rock_domain,
     get_email_auth,
+    dns_twist_impl,
     get_thc_recon,
 )
 
@@ -174,6 +175,13 @@ def privacy_analysis_resource() -> str:
 def threat_surface_resource() -> str:
     """Threat-surface deep-recon methodology: widen attack surface from a domain/IP/ASN/CIDR via Shodan pivot chains (favicon hash, cert CN/org, org, asn:, net:), deep enumeration of ports/products/vulns/exposed services, facet breadth, and surface tagging with depth/credit discipline."""
     return _get_threat_surface_content()
+
+
+@mcp.resource("cybersleuth://dns-twist")
+def dns_twist_resource() -> str:
+    """DNS-twist methodology: fuzzers (homoglyph/typo/bitsquat/tld-swap/subdomain/combosquat), cloud
+    default-naming patterns (Azure/AWS/GCP/SaaS), cert-transparency clues, and look-alike triage."""
+    return (Path(__file__).resolve().parent / "docs" / "dns-twist.md").read_text(encoding="utf-8")
 
 
 @mcp.prompt(title="CyberSleuth system instructions")
@@ -690,6 +698,25 @@ def email_auth(domain: str) -> dict:
         domain: Domain to check (e.g. example.com)
     """
     return get_email_auth(domain)
+
+
+@mcp.tool()
+def dns_twist(domain: str, extra_permutations: list[str] | None = None, fuzzers: str | None = None,
+              resolve: bool = True, whois: bool = False, limit: int = 150) -> dict:
+    """Generate look-alike domain permutations (typosquat/homoglyph/bitsquat/tld-swap/subdomain) for a
+    domain via dnstwist, resolve them, and also check any AI-supplied `extra_permutations`. Returns only
+    positive (registered/resolving) hits with DNS/WHOIS properties, capped at `limit`.
+
+    Args:
+        domain: Target domain (e.g. paypal.com)
+        extra_permutations: Optional custom variants to also resolve (e.g. cloud-naming / AI-suggested)
+        fuzzers: Optional comma-separated dnstwist fuzzers (e.g. "homoglyph,tld-swap,addition"); all if omitted
+        resolve: Only return variants that resolve / are registered (default True)
+        whois: Also fetch WHOIS registrar/created (slower; default False)
+        limit: Max hits to return (default 150)
+    """
+    return dns_twist_impl(domain, extra_permutations=extra_permutations, fuzzers=fuzzers,
+                          resolve=resolve, whois=whois, limit=limit)
 
 
 if __name__ == "__main__":
