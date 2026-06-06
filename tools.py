@@ -95,6 +95,24 @@ def _query_censys(domain: str, api_id: str, api_secret: str) -> tuple:
         return [], str(e)
 
 
+def _query_crtsh(domain: str, include_subdomains: bool) -> tuple:
+    """Query crt.sh Certificate Transparency search (free, no API key). Returns (certs, error_or_None)."""
+    q = f"%.{domain}" if include_subdomains else domain
+    try:
+        resp = requests.get(
+            'https://crt.sh/',
+            params={'q': q, 'output': 'json'},
+            headers={'User-Agent': 'CyberSleuth/1.0'},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json(), None
+    except ValueError as e:  # crt.sh occasionally returns an empty / non-JSON body
+        return [], f'crt.sh non-JSON response: {e}'
+    except requests.exceptions.RequestException as e:
+        return [], str(e)
+
+
 def get_certificate_info(domain: str, include_expired: bool = False, wildcard: bool = True) -> Dict:
     """
     Get certificate information from Certificate Transparency logs.
@@ -117,13 +135,23 @@ def get_certificate_info(domain: str, include_expired: bool = False, wildcard: b
     errors: Dict = {}
     sources_used: List[str] = []
 
-    # CertSpotter — always attempted; API key optional but raises rate limit
-    cs_key = os.environ.get('CERTSPOTTER_API_KEY')
-    raw_certspotter, cs_err = _query_certspotter(domain, include_subdomains=wildcard, api_key=cs_key)
-    if cs_err:
-        errors['certspotter'] = cs_err
+    # Primary: crt.sh — free, no key, reliable. Smart fallback: CertSpotter (whose keyless free tier is
+    # heavily rate-limited → 4xx/429) is only attempted when crt.sh fails, or when a key makes it worth it.
+    # Censys adds coverage when credentials are present. The call succeeds if ANY source returns.
+    raw_crtsh, crt_err = _query_crtsh(domain, include_subdomains=wildcard)
+    if crt_err:
+        errors['crtsh'] = crt_err
     else:
-        sources_used.append('certspotter')
+        sources_used.append('crtsh')
+
+    cs_key = os.environ.get('CERTSPOTTER_API_KEY')
+    raw_certspotter: list = []
+    if crt_err or cs_key:
+        raw_certspotter, cs_err = _query_certspotter(domain, include_subdomains=wildcard, api_key=cs_key)
+        if cs_err:
+            errors['certspotter'] = cs_err
+        else:
+            sources_used.append('certspotter')
 
     # Censys — only attempted when credentials are present
     censys_id = os.environ.get('CENSYS_API_ID')
@@ -226,6 +254,38 @@ def get_certificate_info(domain: str, include_expired: bool = False, wildcard: b
             })
             unique_domains.update(domains)
             unique_issuers.add(issuer_dn)
+
+    # Normalize crt.sh records
+    for cert in raw_crtsh:
+        name_value = cert.get('name_value', '') or ''
+        domains = {d.strip().lower() for d in name_value.split('\n') if d.strip()}
+        cn = cert.get('common_name')
+        if cn:
+            domains.add(cn.strip().lower())
+        issuer_name = cert.get('issuer_name', 'Unknown')
+        try:
+            not_before = _parse_cert_date(cert['not_before'])
+            not_after = _parse_cert_date(cert['not_after'])
+        except (ValueError, KeyError):
+            continue
+        is_valid = not_after > now
+        fingerprint = f"crtsh:{cert.get('id', '') or cert.get('serial_number', '')}"
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
+        if is_valid or include_expired:
+            processed_certs.append({
+                'id': str(cert.get('id', '')),
+                'fingerprint': fingerprint,
+                'issuer': issuer_name,
+                'domains': sorted(domains),
+                'not_before': not_before.isoformat(),
+                'not_after': not_after.isoformat(),
+                'is_valid': is_valid,
+                'source': 'crtsh',
+            })
+            unique_domains.update(domains)
+            unique_issuers.add(issuer_name)
 
     # Categorize domains
     base_domain = domain.lower()
