@@ -169,6 +169,7 @@ The `docs/` directory contains standalone reference guides:
 | Tool | Description |
 |------|-------------|
 | `shodan_search` | Search Shodan for internet-connected devices and services |
+| `shodan_domain` | High-signal Shodan search for a DOMAIN — union of hostname + TLS-cert queries (deduped, `matched_by`-annotated) |
 | `shodan_scan` | **Active** on-demand Shodan scan of IP(s)/netblock(s) — probes the target's ports (authorised targets only; costs scan credits). Returns a scan_id |
 | `shodan_scan_status` | Poll an on-demand `shodan_scan` (SUBMITTING→QUEUE→PROCESSING→DONE); read results via `shodan_search ip:<addr>` |
 | `vt_domain_report` | VirusTotal reputation and analysis stats for a domain |
