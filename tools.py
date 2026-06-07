@@ -902,6 +902,10 @@ def _thc_get(path: str):
     resp = requests.get(_THC_BASE + path, timeout=20, headers={"User-Agent": _THC_UA})
     if resp.status_code == 429:
         return "ratelimited", "", 0
+    if resp.status_code == 404:
+        # THC has no data for this path (e.g. a domain with no reverse-CNAME records) — that's a valid
+        # "nothing found", not a failure. Return an empty OK so the caller reports no data, not an error.
+        return "ok", "", None
     resp.raise_for_status()
     text = _strip_ansi(resp.text)
     m = re.search(r"You can make\s+(\d+)\s+requests", text)
