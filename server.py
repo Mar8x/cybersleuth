@@ -8,6 +8,8 @@ from tools import (
     get_favicon_hash,
     search_shodan,
     get_shodan_domain,
+    submit_shodan_scan,
+    get_shodan_scan_status,
     search_urlscan_history,
     scan_url,
     get_whois_info,
@@ -340,6 +342,42 @@ def shodan_domain(domain: str, limit: int = 10) -> dict:
     if not api_key:
         return {"error": "SHODAN_API_KEY environment variable is not set"}
     return get_shodan_domain(api_key, domain, limit)
+
+
+@mcp.tool()
+def shodan_scan(ips: str, force: bool = False) -> dict:
+    """Submit an ON-DEMAND Shodan scan that ACTIVELY probes the given IP(s)/netblock(s).
+
+    This is ACTIVE reconnaissance — Shodan connects to the target's ports, unlike the passive
+    shodan_search/shodan_domain queries. Only use on infrastructure you are AUTHORISED to scan.
+    Requires a Shodan plan with scan credits. Returns immediately with a scan_id; results land in
+    Shodan's database asynchronously — poll with shodan_scan_status, then read them with
+    shodan_search using `ip:<address>`.
+
+    Args:
+        ips: One IP/netblock or a comma-separated list (e.g. "1.2.3.4" or "1.2.3.0/24,5.6.7.8")
+        force: Re-scan even if recently scanned (enterprise only; default False)
+    """
+    api_key = os.environ.get("SHODAN_API_KEY")
+    if not api_key:
+        return {"error": "SHODAN_API_KEY environment variable is not set"}
+    return submit_shodan_scan(api_key, ips, force)
+
+
+@mcp.tool()
+def shodan_scan_status(scan_id: str) -> dict:
+    """Poll the status of an on-demand Shodan scan submitted via shodan_scan.
+
+    Status progresses SUBMITTING -> QUEUE -> PROCESSING -> DONE. Once DONE, read the fresh host
+    data with shodan_search using `ip:<address>`.
+
+    Args:
+        scan_id: The scan id returned by shodan_scan
+    """
+    api_key = os.environ.get("SHODAN_API_KEY")
+    if not api_key:
+        return {"error": "SHODAN_API_KEY environment variable is not set"}
+    return get_shodan_scan_status(api_key, scan_id)
 
 
 @mcp.tool()

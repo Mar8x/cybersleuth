@@ -1491,6 +1491,72 @@ def get_shodan_domain(api_key: str, domain: str, limit: int = 10) -> Dict:
         return {"error": f"Error during Shodan domain search: {str(e)}", '_telemetry': _make_telemetry(started, errors=[f"Error during Shodan domain search: {str(e)}"], quality=0.0)}
 
 
+def submit_shodan_scan(api_key: str, ips, force: bool = False) -> Dict:
+    """Submit an ON-DEMAND Shodan scan — ACTIVELY probe the given IP(s)/netblock(s). Costs scan credits.
+
+    Args:
+        api_key (str): Shodan API key (a plan with scan credits is required)
+        ips: One IP/netblock, a comma-separated string, or a list (e.g. "1.2.3.4" or ["1.2.3.0/24"])
+        force (bool): Re-scan even if recently scanned (enterprise only)
+
+    Returns:
+        Dict: scan_id, targets, ip_count, credits_left (or error)
+    """
+    started = datetime.datetime.now(_UTC)
+    try:
+        if isinstance(ips, str):
+            targets = [x.strip() for x in ips.split(',') if x.strip()]
+        else:
+            targets = [str(x).strip() for x in (ips or []) if str(x).strip()]
+        if not targets:
+            return {"error": "No IPs/netblocks provided",
+                    '_telemetry': _make_telemetry(started, errors=['no targets'], quality=0.0)}
+        api = shodan.Shodan(api_key)
+        result = api.scan(targets, force=force)
+        return {
+            "scan_id": result.get("id"),
+            "targets": targets,
+            "ip_count": result.get("count"),
+            "credits_left": result.get("credits_left"),
+            '_telemetry': _make_telemetry(started, quality=1.0),
+        }
+    except shodan.APIError as e:
+        return {"error": f"Shodan scan error: {str(e)}",
+                '_telemetry': _make_telemetry(started, errors=[f"Shodan scan error: {str(e)}"], quality=0.0)}
+    except Exception as e:
+        return {"error": f"Error submitting Shodan scan: {str(e)}",
+                '_telemetry': _make_telemetry(started, errors=[str(e)], quality=0.0)}
+
+
+def get_shodan_scan_status(api_key: str, scan_id: str) -> Dict:
+    """Poll the status of an on-demand Shodan scan (SUBMITTING → QUEUE → PROCESSING → DONE).
+
+    Args:
+        api_key (str): Shodan API key
+        scan_id (str): The scan id returned by submit_shodan_scan
+
+    Returns:
+        Dict: scan_id, status, created, size (or error)
+    """
+    started = datetime.datetime.now(_UTC)
+    try:
+        api = shodan.Shodan(api_key)
+        result = api.scan_status(scan_id)
+        return {
+            "scan_id": scan_id,
+            "status": result.get("status"),
+            "created": result.get("created"),
+            "size": result.get("size"),
+            '_telemetry': _make_telemetry(started, quality=1.0),
+        }
+    except shodan.APIError as e:
+        return {"error": f"Shodan scan status error: {str(e)}",
+                '_telemetry': _make_telemetry(started, errors=[f"Shodan scan status error: {str(e)}"], quality=0.0)}
+    except Exception as e:
+        return {"error": f"Error fetching Shodan scan status: {str(e)}",
+                '_telemetry': _make_telemetry(started, errors=[str(e)], quality=0.0)}
+
+
 def search_urlscan_history(url: str, api_key: str, limit: int = 10) -> Dict:
     """
     Search URLScan.io's historical data.
@@ -3316,6 +3382,8 @@ __all__ = [
     'get_favicon_hash',
     'search_shodan',
     'get_shodan_domain',
+    'submit_shodan_scan',
+    'get_shodan_scan_status',
     'search_urlscan_history',
     'scan_url',
     'get_whois_info',
