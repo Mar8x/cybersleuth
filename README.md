@@ -9,7 +9,7 @@
 [![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://docs.astral.sh/uv/)
 [![Built with Claude](https://img.shields.io/badge/built%20with-Claude-black)](https://claude.ai)
 
-CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes 25 cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, domains, companies, people, tech stacks, privacy posture, LLM surfaces, and more.
+CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes 30 cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, domains, companies, people, tech stacks, privacy posture, LLM surfaces, and more.
 
 ## Features
 
@@ -118,6 +118,8 @@ The same content is also exposed by the MCP server as resources:
 | `cybersleuth://tech-stack-recon` | Tech-stack intelligence methodology: ATS discovery, job-posting extraction, GitHub recon |
 | `cybersleuth://llm-recon` | LLM/AI surface recon methodology: passive signals, OWASP LLM Top 10:2025 mapping |
 | `cybersleuth://privacy-analysis` | Privacy & data handling methodology: OPP-115, jurisdiction gap analysis, tracker risk DB |
+| `cybersleuth://threat-surface` | Threat-surface deep-recon methodology: Shodan pivot chains (favicon/cert/org/asn/net), enumeration breadth, surface tagging |
+| `cybersleuth://dns-twist` | DNS-twist methodology: fuzzers (homoglyph/typo/bitsquat/tld-swap/subdomain/combosquat), cloud default-naming (Azure/AWS/GCP/SaaS), cert-transparency clues, look-alike triage |
 
 **Prompt:** `CyberSleuth system instructions` — load the instructions as an MCP prompt (for clients that support MCP prompts).
 
@@ -134,6 +136,8 @@ The `docs/` directory contains standalone reference guides:
 - `docs/tech-stack-recon.md` — Tech-stack intelligence methodology
 - `docs/llm-recon.md` — LLM/AI surface reconnaissance methodology
 - `docs/privacy-analysis.md` — Privacy & data handling analysis methodology
+- `docs/threat-surface.md` — Threat-surface deep-recon methodology (also `cybersleuth://threat-surface`)
+- `docs/dns-twist.md` — DNS-twist look-alike/permutation methodology (also `cybersleuth://dns-twist`)
 
 ## Available Tools
 
@@ -145,6 +149,7 @@ The `docs/` directory contains standalone reference guides:
 | `dns_records` | DNS enumeration (A, AAAA, MX, NS, TXT, SOA, CNAME, PTR, SRV, CAA) |
 | `reverse_dns` | Reverse DNS lookup for an IP address |
 | `thc_recon` | Passive DNS via ip.thc.org — domain: reverse-CNAME (who CNAMEs to it) + passive subdomains; IP: passive reverse-IP hostnames + ASN/org (fills gaps when live PTR is empty). No key; rate-limited ~0.5 req/s |
+| `dns_twist` | Generate look-alike domain permutations (typosquat/homoglyph/bitsquat/tld-swap/subdomain) for a domain via dnstwist, resolve them + check AI-supplied `extra_permutations`, and return only registered/resolving hits with DNS/WHOIS properties. See `cybersleuth://dns-twist` |
 | `as_intelligence` | ASN, AS org, country, and hosting/cloud classification for an IP or domain |
 
 ### Certificate & Web
@@ -212,7 +217,7 @@ The `docs/` directory contains standalone reference guides:
 ┌─────────────────────────────────────────┼────────────────────┐
 │  YOUR LOCAL MACHINE                     │                    │
 │  ┌──────────────────────────────────────▼─────────────────┐  │
-│  │  server.py (MCP Server — 29 tools, 7 resources)        │  │
+│  │  server.py (MCP Server — 30 tools, 9 resources)        │  │
 │  │  └── tools.py (OSINT + research functions)             │  │
 │  └──────────────────────┬─────────────────────────────────┘  │
 │                         │                                    │

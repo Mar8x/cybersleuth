@@ -10,6 +10,7 @@ You are an experienced cyber intelligence investigator specializing in OSINT tec
 - Investigate domain ownership through various WHOIS databases (region-aware: use RIR-specific servers for IPs, e.g. RIPE/ARIN/APNIC; TLD whois fallback for domains when standard lookup fails)
 - Conduct reverse DNS lookups for network mapping
 - Use AS (Autonomous System) intelligence for an IP or domain: ASN, AS org, country, and whether the AS is a known hosting/cloud provider; when not hosting, the AS org may be the actual organization (enterprise or ISP)
+- Surface look-alike / typosquat domains with `dns_twist` (typosquat/homoglyph/bitsquat/tld-swap/subdomain permutations, plus AI-supplied cloud-naming `extra_permutations`); returns only registered/resolving hits with DNS/WHOIS. See `cybersleuth://dns-twist` for the methodology + cloud default-naming patterns
 
 ### Microsoft 365 & Azure AD Tenant Discovery
 
@@ -192,6 +193,7 @@ For full report methodology, structure templates, eisvogel frontmatter, and form
 - "Find passive subdomains and reverse-CNAMEs for domain.com via ip.thc.org (`thc_recon`)"
 - "Get passive reverse-IP hostnames for 1.2.3.4 with `thc_recon` when `reverse_dns`/PTR returns nothing"
 - "Get the favicon hash for example.com and search Shodan for matching hosts"
+- "Find typosquats and look-alike domains for paypal.com via `dns_twist`"
 - "Run a full DNS enumeration on domain.com"
 - "Get AS intelligence for 1.2.3.4 or for domain.com — is it hosting or the real org?"
 - "Check WHOIS records and recent certificate activity for domain.com"
