@@ -158,6 +158,7 @@ The `docs/` directory contains standalone reference guides:
 |------|-------------|
 | `certificate_info` | SSL/TLS certificate history from CertSpotter (+ Censys if credentials set); subdomain discovery |
 | `security_txt` | Fetch and parse security.txt for a domain (RFC 9116): contact, policy, encryption key, expiry |
+| `email_auth` | Domain email-authentication posture: SPF, DMARC, DKIM parsing + gap analysis (no API key) |
 | `favicon_hash` | Favicon hashes for Shodan infrastructure searches |
 | `urlscan_history` | Historical URLScan.io scan data for a URL or domain |
 | `urlscan_submit` | Submit a URL for live scanning on URLScan.io |
@@ -172,6 +173,7 @@ The `docs/` directory contains standalone reference guides:
 | `shodan_scan_status` | Poll an on-demand `shodan_scan` (SUBMITTING→QUEUE→PROCESSING→DONE); read results via `shodan_search ip:<addr>` |
 | `vt_domain_report` | VirusTotal reputation and analysis stats for a domain |
 | `vt_ip_report` | VirusTotal reputation and analysis stats for an IP address |
+| `hudson_rock` | Check whether a domain appears in infostealer logs (Hudson Rock Cavalier; free, no API key) |
 
 ### Tech-Stack Intelligence
 
