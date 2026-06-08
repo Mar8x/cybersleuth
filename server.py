@@ -133,6 +133,16 @@ def _get_threat_surface_content() -> str:
     return _THREAT_SURFACE_FILE.read_text(encoding="utf-8")
 
 
+@mcp.resource("cybersleuth://manifest")
+def manifest_resource() -> str:
+    """Source-provenance manifest (chain of evidence): the build reference (version, git commit, build date)
+    and the tool→external-source map. Consumers record this to attribute which build + provider produced
+    each finding. JSON."""
+    import json
+    from manifest import build_manifest
+    return json.dumps(build_manifest(), indent=2)
+
+
 @mcp.resource("cybersleuth://instructions")
 def instructions_resource() -> str:
     """CyberSleuth persona, methodology, and example queries (skill / agent instructions)."""
