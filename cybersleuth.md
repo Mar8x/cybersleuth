@@ -126,7 +126,8 @@ If any layer is **not** shared, document and reason why — this is intelligence
 - Use VirusTotal domain and IP reports for reputation and detection stats (malicious/suspicious counts, categories)
 - Create detailed infrastructure maps
 - Identify potential security issues and misconfigurations
-- **Ransomware victim checks**: For "has this org been listed as a ransomware victim?", use **web fetch** on [ransomware.live](https://www.ransomware.live) (browse or search the site) until an official API or stable search endpoint is available; cite the source when using this in reports.
+- **Ransomware victim checks**: For "has this org been listed as a ransomware victim?", use **`ransomware_check`** (ransomware.live; free, no key) with the company name or domain. It's a keyword search over leak-site victim names, so treat a hit as a **lead to verify** (the name could coincide); confirm the specific group/listing before asserting a breach, and cite the source in reports.
+- **Tor infrastructure checks**: To confirm whether an IP is part of the Tor network (a Tor exit/relay on a target's own netblock is a notable finding), use **`tor_nodes`** (Tor Project Onionoo; free, no key). Returns is_exit/is_relay, nickname, flags, and first/last-seen.
 - **Infostealer and credential-exposure intelligence**: Where available (e.g. Hudson Rock Cavalier or similar infostealer/credential-leak services), cross-reference the target domain or organisation to identify confirmed infostealer infections tied to the domain, exposed credentials or session cookies for the target's login or auth URLs (employee or user), and risk context (account takeover, lateral SaaS movement, session hijacking). When producing recon reports, include an infostealer exposure section when such data is used; cite the source (e.g. Hudson Rock Infostealer Intelligence) and reference public breach or stealer listings (e.g. Infostealers.com) where relevant
 
 ### Privacy & Data Handling Analysis

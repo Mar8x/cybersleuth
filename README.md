@@ -9,7 +9,7 @@
 [![uv](https://img.shields.io/badge/uv-package%20manager-blueviolet)](https://docs.astral.sh/uv/)
 [![Built with Claude](https://img.shields.io/badge/built%20with-Claude-black)](https://claude.ai)
 
-CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes 32 cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, domains, companies, people, tech stacks, privacy posture, LLM surfaces, and more.
+CyberSleuth is an OSINT (Open Source Intelligence) tool that exposes 34 cyber-investigation capabilities as an MCP server. Connect it to Claude Desktop or Claude Code and use natural language to investigate infrastructure, domains, companies, people, tech stacks, privacy posture, LLM surfaces, and more.
 
 ## Features
 
@@ -175,6 +175,8 @@ The `docs/` directory contains standalone reference guides:
 | `vt_domain_report` | VirusTotal reputation and analysis stats for a domain |
 | `vt_ip_report` | VirusTotal reputation and analysis stats for an IP address |
 | `hudson_rock` | Check whether a domain appears in infostealer logs (Hudson Rock Cavalier; free, no API key) |
+| `tor_nodes` | Check whether an IP is a Tor relay or exit node (Tor Project Onionoo API; free, no key). Returns is_exit/is_relay, nickname, flags, first/last seen, AS/country |
+| `ransomware_check` | Check whether an org/domain is named as a victim on a ransomware leak site (ransomware.live; free, no key). Keyword search over victim names — treat a hit as a lead to verify |
 
 ### Tech-Stack Intelligence
 
@@ -222,7 +224,7 @@ The `docs/` directory contains standalone reference guides:
 ┌─────────────────────────────────────────┼────────────────────┐
 │  YOUR LOCAL MACHINE                     │                    │
 │  ┌──────────────────────────────────────▼─────────────────┐  │
-│  │  server.py (MCP Server — 32 tools, 9 resources)        │  │
+│  │  server.py (MCP Server — 34 tools, 9 resources)        │  │
 │  │  └── tools.py (OSINT + research functions)             │  │
 │  └──────────────────────┬─────────────────────────────────┘  │
 │                         │                                    │
