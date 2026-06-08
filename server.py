@@ -37,6 +37,8 @@ from tools import (
     get_email_auth,
     dns_twist_impl,
     get_thc_recon,
+    get_tor_nodes,
+    get_ransomware_check,
 )
 
 mcp = FastMCP(
@@ -722,6 +724,34 @@ def hudson_rock(domain: str) -> dict:
         domain: Target domain to check (e.g. example.com)
     """
     return hudson_rock_domain(domain)
+
+
+@mcp.tool()
+def tor_nodes(ip: str) -> dict:
+    """Check whether an IP is a Tor relay or exit node (Tor Project's Onionoo API — free, no key).
+
+    Returns is_tor_node, is_exit, is_relay, nickname, fingerprint, flags, first/last seen, and AS/country.
+    Use this to confirm whether infrastructure (e.g. an IP in a target's netblock) is part of the Tor
+    network — a Tor exit/relay on corporate-owned space is a notable finding.
+
+    Args:
+        ip: IP address to check.
+    """
+    return get_tor_nodes(ip)
+
+
+@mcp.tool()
+def ransomware_check(query: str) -> dict:
+    """Check whether an organisation or domain is named as a victim on a ransomware leak site
+    (ransomware.live — free, no key; aggregates ransomware-gang .onion leak sites).
+
+    Returns is_victim, the ransomware groups, and victim records. It is a keyword search over victim
+    names — treat a hit as a lead to verify, not a confirmed breach.
+
+    Args:
+        query: Company name or domain (e.g. "Acme Corp" or "acme.com").
+    """
+    return get_ransomware_check(query)
 
 
 @mcp.tool()

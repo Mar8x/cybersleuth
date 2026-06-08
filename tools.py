@@ -3408,6 +3408,8 @@ __all__ = [
     'llm_security_probe',
     'get_privacy_policy',
     'scan_trackers',
+    'get_tor_nodes',
+    'get_ransomware_check',
 ]
 
 
@@ -4718,6 +4720,130 @@ def hudson_rock_domain(domain: str) -> Dict:
     except Exception as e:
         err = f"Hudson Rock lookup failed: {e}"
         return {"error": err, "domain": domain,
+                "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
+
+
+def get_tor_nodes(ip: str) -> Dict:
+    """
+    Check whether an IP is a Tor relay or exit node via the Tor Project's Onionoo API (free, no key).
+
+    Args:
+        ip: IP address to check.
+
+    Returns:
+        Dict with is_tor_node, is_exit, is_relay, nickname, fingerprint, flags, first/last_seen, country, as.
+    """
+    started = datetime.datetime.now(_UTC)
+    ip = (ip or "").strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        err = f"Invalid IP address: {ip!r}"
+        return {"error": err, "ip": ip, "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
+    try:
+        resp = requests.get(
+            "https://onionoo.torproject.org/details",
+            params={"search": ip},
+            timeout=15,
+            headers={"User-Agent": "cybersleuth-osint/1.0"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        relays = data.get("relays") or []
+        if not relays:
+            return {"ip": ip, "is_tor_node": False, "_telemetry": _make_telemetry(started, quality=0.5)}
+        r = relays[0]
+        flags = r.get("flags") or []
+        is_exit = ("Exit" in flags) or bool(r.get("exit_addresses"))
+        return {
+            "ip": ip,
+            "is_tor_node": True,
+            "is_exit": is_exit,
+            "is_relay": bool(r.get("running")),
+            "nickname": r.get("nickname"),
+            "fingerprint": r.get("fingerprint"),
+            "flags": flags,
+            "first_seen": r.get("first_seen"),
+            "last_seen": r.get("last_seen"),
+            "running": r.get("running"),
+            "country": r.get("country"),
+            "as": r.get("as"),
+            "as_name": r.get("as_name"),
+            "relays_matched": len(relays),
+            "_telemetry": _make_telemetry(started, quality=1.0),
+        }
+    except Exception as e:
+        err = f"Onionoo lookup failed: {e}"
+        return {"error": err, "ip": ip, "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
+
+
+def get_ransomware_check(query: str) -> Dict:
+    """
+    Check whether an organisation or domain is named as a victim on a ransomware leak site, via
+    ransomware.live (free, no key — aggregates ransomware-gang .onion leak sites).
+
+    NOTE: this is a keyword search over victim names — treat a hit as a LEAD to verify (the name could
+    coincide), not a confirmed breach.
+
+    Args:
+        query: Company name or domain (e.g. "Acme Corp" or "acme.com").
+
+    Returns:
+        Dict with is_victim, victim_count, groups, and victim records {victim, group, attackdate, country}.
+    """
+    started = datetime.datetime.now(_UTC)
+    keyword = (query or "").strip()
+    if not keyword:
+        err = "empty query"
+        return {"error": err, "query": query, "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
+    # A domain → search its registrable label (ransomware.live indexes by company name).
+    kw = keyword.lower()
+    if "." in kw and " " not in kw and "/" not in kw:
+        parts = kw.split(".")
+        kw_search = parts[-2] if len(parts) >= 2 else kw
+    else:
+        kw_search = keyword
+    try:
+        resp = requests.get(
+            f"https://api.ransomware.live/v2/searchvictims/{kw_search}",
+            timeout=15,
+            headers={"User-Agent": "cybersleuth-osint/1.0"},
+        )
+        if resp.status_code == 404:
+            return {"query": keyword, "is_victim": False, "_telemetry": _make_telemetry(started, quality=0.5)}
+        if resp.status_code == 429:
+            err = "ransomware.live rate limit (429)"
+            return {"error": err, "query": keyword,
+                    "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
+        resp.raise_for_status()
+        data = resp.json()
+        victims = data if isinstance(data, list) else (data.get("victims") or data.get("data") or [])
+        if not victims:
+            return {"query": keyword, "is_victim": False, "_telemetry": _make_telemetry(started, quality=0.5)}
+        groups: List[str] = []
+        norm: List[Dict] = []
+        for v in victims[:25]:
+            g = v.get("group") or v.get("group_name")
+            if g and g not in groups:
+                groups.append(g)
+            norm.append({
+                "victim": v.get("victim") or v.get("post_title"),
+                "group": g,
+                "attackdate": v.get("attackdate") or v.get("discovered") or v.get("published"),
+                "country": v.get("country"),
+            })
+        return {
+            "query": keyword,
+            "search_term": kw_search,
+            "is_victim": True,
+            "victim_count": len(victims),
+            "groups": groups,
+            "victims": norm,
+            "_telemetry": _make_telemetry(started, quality=1.0),
+        }
+    except Exception as e:
+        err = f"ransomware.live lookup failed: {e}"
+        return {"error": err, "query": keyword,
                 "_telemetry": _make_telemetry(started, errors=[err], quality=0.0)}
 
 

@@ -1621,3 +1621,65 @@ class TestThcReconMocked:
             r = tools.get_thc_recon("8.8.8.8")
         assert "error" in r and "THC lookup failed" in r["error"]
         assert r["_telemetry"]["quality"] == 0.0
+
+
+def _json_resp(payload, status: int = 200) -> MagicMock:
+    r = MagicMock()
+    r.status_code = status
+    r.json.return_value = payload
+    r.raise_for_status.return_value = None
+    return r
+
+
+class TestTorNodesMocked:
+    def test_tor_exit_detected(self):
+        import tools
+        payload = {"relays": [{"nickname": "exitnode1", "fingerprint": "ABC123",
+                               "flags": ["Running", "Exit", "Fast"], "running": True, "country": "us",
+                               "as": "AS1234", "first_seen": "2020-01-01 00:00:00",
+                               "last_seen": "2026-06-01 00:00:00"}], "bridges": []}
+        with patch("tools.requests.get", return_value=_json_resp(payload)):
+            r = tools.get_tor_nodes("1.2.3.4")
+        assert r["is_tor_node"] is True and r["is_exit"] is True and r["is_relay"] is True
+        assert r["nickname"] == "exitnode1"
+        assert r["_telemetry"]["quality"] == 1.0
+
+    def test_relay_not_exit(self):
+        import tools
+        payload = {"relays": [{"nickname": "guard1", "flags": ["Running", "Guard"], "running": True}], "bridges": []}
+        with patch("tools.requests.get", return_value=_json_resp(payload)):
+            r = tools.get_tor_nodes("1.2.3.4")
+        assert r["is_tor_node"] is True and r["is_exit"] is False
+
+    def test_non_tor_ip(self):
+        import tools
+        with patch("tools.requests.get", return_value=_json_resp({"relays": [], "bridges": []})):
+            r = tools.get_tor_nodes("8.8.8.8")
+        assert r["is_tor_node"] is False and r["_telemetry"]["quality"] == 0.5
+
+    def test_invalid_ip(self):
+        import tools
+        r = tools.get_tor_nodes("not-an-ip")
+        assert "error" in r and r["_telemetry"]["quality"] == 0.0
+
+
+class TestRansomwareCheckMocked:
+    def test_victim_found_by_domain(self):
+        import tools
+        payload = [{"victim": "Acme Corp", "group": "lockbit", "attackdate": "2025-01-01", "country": "US"}]
+        with patch("tools.requests.get", return_value=_json_resp(payload)):
+            r = tools.get_ransomware_check("acme.com")
+        assert r["is_victim"] is True and "lockbit" in r["groups"]
+        assert r["search_term"] == "acme" and r["_telemetry"]["quality"] == 1.0
+
+    def test_clean(self):
+        import tools
+        with patch("tools.requests.get", return_value=_json_resp([])):
+            r = tools.get_ransomware_check("nonexistentcorp")
+        assert r["is_victim"] is False and r["_telemetry"]["quality"] == 0.5
+
+    def test_rate_limited(self):
+        import tools
+        with patch("tools.requests.get", return_value=_json_resp({}, status=429)):
+            r = tools.get_ransomware_check("acme")
+        assert "error" in r
