@@ -32,11 +32,19 @@ def _make_telemetry(
     errs = [e for e in (errors or []) if e]
     if quality is None:
         quality = 0.0 if errs else 1.0
-    return {
+    tel = {
         'duration_ms': elapsed_ms,
         'errors': errs,
         'quality': round(max(0.0, min(1.0, quality)), 2),
     }
+    # Stamp the immutable build reference (commit + date) onto every response so the consumer can record
+    # which cybersleuth build produced each finding (chain of evidence). See manifest.py.
+    try:
+        from manifest import source_ref
+        tel['source'] = source_ref()
+    except Exception:
+        pass
+    return tel
 
 
 def _parse_cert_date(s: str) -> datetime.datetime:

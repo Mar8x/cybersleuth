@@ -1683,3 +1683,28 @@ class TestRansomwareCheckMocked:
         with patch("tools.requests.get", return_value=_json_resp({}, status=429)):
             r = tools.get_ransomware_check("acme")
         assert "error" in r
+
+
+class TestProvenanceManifest:
+    def test_telemetry_stamps_source_ref(self):
+        import datetime, tools
+        t = tools._make_telemetry(datetime.datetime.now(datetime.timezone.utc))
+        assert "source" in t
+        s = t["source"]
+        assert {"cybersleuth_version", "cybersleuth_commit", "cybersleuth_build_date", "retrieved_at"} <= set(s)
+
+    def test_manifest_builds_and_covers_all_tools(self):
+        import re, manifest
+        m = manifest.build_manifest()
+        assert m["service"] == "cybersleuth" and m["tool_count"] == len(manifest.SOURCES)
+        # every registered MCP tool has a source entry (no untracked provenance)
+        toolnames = set(re.findall(r"@mcp\.tool\(\)\s*\ndef (\w+)\(", open("server.py").read()))
+        assert toolnames - set(manifest.SOURCES.keys()) == set()
+        # every source entry is a real tool
+        assert set(manifest.SOURCES.keys()) - toolnames == set()
+
+    def test_known_tool_providers(self):
+        import manifest
+        assert manifest.SOURCES["tor_nodes"]["providers"][0]["provider"] == "Tor Project Onionoo"
+        assert manifest.SOURCES["vt_ip_report"]["providers"][0]["provider"] == "VirusTotal"
+        assert manifest.SOURCES["ransomware_check"]["providers"][0]["provider"] == "ransomware.live"
